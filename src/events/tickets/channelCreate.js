@@ -6,6 +6,24 @@ const {
 const {
   buildModeAwareTicketControlPayload,
 } = require("../../components/ticketAiControls");
+const { reconcileOpeningContext } = require("./openingContext");
+
+const OPENING_RECONCILE_DELAYS_MS = [500, 2000];
+
+function scheduleOpeningContextReconciliation(channel, options = {}) {
+  const reconcile = options.reconcile || reconcileOpeningContext;
+  const delays = options.delays || OPENING_RECONCILE_DELAYS_MS;
+
+  return delays.map((delayMs) => {
+    const timer = setTimeout(() => {
+      reconcile(channel).catch((error) => {
+        console.error("Delayed opening context reconciliation failed:", error);
+      });
+    }, delayMs);
+    timer.unref?.();
+    return timer;
+  });
+}
 
 async function trackTicketChannel(channel, options = {}) {
   const client = options.client || prisma;
@@ -79,6 +97,10 @@ async function trackTicketChannel(channel, options = {}) {
   });
   await channel.send(payload);
 
+  if (options.scheduleReconciliation !== false) {
+    scheduleOpeningContextReconciliation(channel, options);
+  }
+
   return {
     tracked: true,
     plan: entitlement.plan,
@@ -99,5 +121,7 @@ const channelCreateEvent = {
 };
 
 module.exports = Object.assign(channelCreateEvent, {
+  OPENING_RECONCILE_DELAYS_MS,
+  scheduleOpeningContextReconciliation,
   trackTicketChannel,
 });
