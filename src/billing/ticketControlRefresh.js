@@ -68,6 +68,7 @@ async function refreshOpenTicketControlForChannel({
     const payload = buildModeAwareTicketControlPayload(aiEnabled, {
       plan: currentEntitlement.plan,
       settings: currentSettings,
+      channel,
       escalated: currentTicket?.escalated === true,
     });
 
