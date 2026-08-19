@@ -558,7 +558,7 @@ async function handleAiEscalationModal(interaction) {
   if (!routes.length) {
     await interaction.editReply({
       content:
-        "No support roles are configured yet. Ask an admin to add routes with `/pixy-admins action:add`.",
+        "No support roles are configured yet. Ask an admin to open `/pixy-setup` → **Human Support** and add a support route.",
     });
     return;
   }
@@ -581,16 +581,9 @@ async function handleAiEscalationModal(interaction) {
       routes,
     });
 
-    const config = await prisma.guildConfig.findUnique({
-      where: {
-        guildId: interaction.guild.id,
-      },
-    });
-
     aiResult = await generateAiReply({
       messages,
-      provider: config?.aiProvider || aiConfig.provider,
-      model: config?.aiModel || aiConfig.groq.model,
+      guildId: interaction.guild.id,
     });
   } catch (error) {
     console.error("Manual AI escalation routing failed:", error);
@@ -763,7 +756,7 @@ async function handleAssistedRoleEscalationModal(interaction, roleId) {
   if (!route) {
     await interaction.editReply({
       content:
-        "This support role is no longer configured. Ask an admin to check `/pixy-admins action:list`.",
+        "This support role is no longer configured. Ask an admin to open `/pixy-setup` → **Human Support** and review the configured routes.",
     });
     return;
   }
@@ -781,12 +774,6 @@ async function handleAssistedRoleEscalationModal(interaction, roleId) {
   let parsed;
 
   try {
-    const config = await prisma.guildConfig.findUnique({
-      where: {
-        guildId: interaction.guild.id,
-      },
-    });
-
     const messages = await buildAssistedRoleEscalationMessages({
       interaction,
       issue,
@@ -795,8 +782,7 @@ async function handleAssistedRoleEscalationModal(interaction, roleId) {
 
     aiResult = await generateAiReply({
       messages,
-      provider: config?.aiProvider || aiConfig.provider,
-      model: config?.aiModel || aiConfig.groq.model,
+      guildId: interaction.guild.id,
     });
 
     parsed = parseAiOutput(aiResult.text);
@@ -993,7 +979,7 @@ module.exports = {
         if (!route) {
           await interaction.reply({
             content:
-              "This support role is no longer configured. Ask an admin to check `/pixy-admins action:list`.",
+              "This support role is no longer configured. Ask an admin to open `/pixy-setup` → **Human Support** and review the configured routes.",
             flags: EPHEMERAL,
           });
           return;
@@ -1110,7 +1096,7 @@ module.exports = {
         if (!routes.length) {
           await respond({
             content:
-              "No support roles are configured yet. Ask an admin to add routes with `/pixy-admins action:add`.",
+              "No support roles are configured yet. Ask an admin to open `/pixy-setup` → **Human Support** and add a support route.",
             components: [],
           });
           return;
@@ -1154,16 +1140,9 @@ module.exports = {
           proposedName: cleanedName,
         });
 
-        const config = await prisma.guildConfig.findUnique({
-          where: {
-            guildId: interaction.guild.id,
-          },
-        });
-
         const aiResult = await generateAiReply({
           messages,
-          provider: config?.aiProvider || aiConfig.provider,
-          model: config?.aiModel || aiConfig.groq.model,
+          guildId: interaction.guild.id,
         });
 
         const parsed = parseAiOutput(aiResult.text);
