@@ -78,7 +78,10 @@ async function saveCategory(guildId, categoryId, options = {}) {
     });
 
     if (tx.ticketSource?.deleteMany && tx.ticketSource?.upsert) {
-      await replaceCategoryTicketSources(guildId, [categoryId], { client: tx });
+      await replaceCategoryTicketSources(guildId, [categoryId], {
+        client: tx,
+        useTransaction: false,
+      });
     }
 
     return config;
