@@ -1,147 +1,260 @@
 # Pixy AI Tickets 🤖
 
-Pixy AI Tickets is a public, multi-server Discord ticket assistant with guild-scoped knowledge, validated ticket actions, human escalation, interactive settings, encrypted per-server Groq credentials, and manually administered Trial, Pro, and Partner plans.
+Pixy AI Tickets is a public, multi-server Discord AI support assistant that works alongside an existing ticket system instead of replacing it. It supports channel-based tickets, ticket threads, guild-scoped knowledge, safe human escalation, plan-aware controls, encrypted per-server AI credentials, and manually administered Trial, Pro, and Partner plans.
 
-## MVP scope
+This repository is public so Discord, partners, and collaborators can inspect the implementation and policies. Source availability does **not** mean the project is Open Source or grant rights beyond the repository's applicable terms.
 
-Pixy uses manual billing rather than an automated checkout. A server's effective plan is resolved at request time with this priority:
+## Product model
+
+Pixy has two ticket behaviors:
+
+- **Smart Overlay** — recommended when another ticket bot owns the lifecycle. Pixy answers questions, can pause/resume AI, and can hand a ticket to Human Support without closing, renaming, moving, or deleting it.
+- **Full Ticket Control** — available for channel-based tickets after a permission/setup preflight. Pixy may expose validated Close, Rename, and Escalation actions according to server settings and plan entitlement.
+
+**Thread tickets always use Smart Overlay for lifecycle safety**, even when channel tickets in the same server use Full Ticket Control.
+
+## Plans
+
+The effective plan is resolved at request time with this priority:
 
 `Partner > active Pro > active Trial > Expired`
 
-- **Trial** — one seven-day premium Trial created after the server's first successful `/pixy-setup`.
-- **Pro** — time-limited premium entitlement activated or extended by a Pixy owner.
-- **Partner** — premium entitlement without an expiry; stored Pro or Trial remains underneath as the fallback state.
-- **Expired** — free mode. Generic ticket AI replies and ticket AI On/Off continue, but learned AI context, new learned entries, and validated agent ticket actions are locked.
+- **Trial** — one seven-day premium Trial started only after the first successful onboarding is completed.
+- **Pro** — time-limited premium entitlement activated or extended manually by a Pixy owner.
+- **Partner** — premium entitlement without an expiry; stored Pro or Trial remains underneath as fallback state.
+- **Expired** — generic AI replies and ticket AI On/Off remain available, while learned AI context, new knowledge additions, and validated agent ticket actions are locked.
 
-Every server supplies its own Groq API key and is responsible for its own Groq usage, limits, and charges. Pixy does not provide a shared Groq quota and does not collect payment credentials.
+Resetting Pixy, removing/reinviting the bot, or configuring it again does not create another Trial.
 
 ## Main features
 
-- AI replies inside configured ticket channels
-- Per-server learned Q&A and free-form knowledge
-- Validated close, rename, and escalation actions
-- Configurable support routes and escalation notifications
-- Entitlement and feature flags rechecked before actions execute
-- Plan-aware ticket controls, including AI-only controls in Expired mode
-- Per-guild Groq credentials encrypted at rest
-- Per-channel AI blacklist for transcript, ownership, or automation channels
-- Guild-isolated usage logs and operational data deletion
+- AI replies inside configured ticket channels and ticket threads
+- Multiple Ticket Sources per guild
+- Category sources for channel-based tickets
+- Thread Parent sources for ticket threads under text, announcement, forum, or media channels
+- Guild-scoped Q&A and free-form knowledge
+- Smart Overlay and Full Ticket Control operating modes
+- Validated close, rename, and human-escalation actions for supported channel tickets
+- Safe overlay handoff for Thread tickets
+- Support-role routing and escalation notifications
+- Non-mentionable role fallback: handoff still succeeds even when Pixy cannot ping the role
+- Ticket-level AI pause/resume controls
+- Per-ticket exclusions for tracked channels or threads
+- Built-in and guild-specific safety terms with allow exceptions
+- Provider-aware AI configuration with encrypted guild credentials
+- Plan-aware controls and execution-time entitlement checks
+- Guild-isolated AI usage logs and operational reset
 - Manual Trial, Pro, and Partner billing with transactional audit records
 
-## Server setup
+## First-run setup
 
-1. Run `/pixy-setup` as a server administrator and choose the category where an external ticket bot creates ticket channels. The first successful setup starts the one-time seven-day Trial when no billing record exists.
-2. Run `/pixy-settings` and add the server's Groq API key.
-3. Run `/pixy-billing` to view the current plan, dates, remaining time, feature availability, and manual activation options.
-4. Choose a Groq chat model when the default is not suitable.
-5. Configure support routes with `/pixy-admins`.
-6. Run `/pixy-blacklist action:Add`, then choose a non-conversation channel inside the configured ticket category.
+Run `/pixy-setup` as a server administrator. The first run is a guided three-step onboarding flow.
 
-Pixy registers global slash commands and is not tied to one Discord guild.
+### 1. Ticket Sources
 
-## Public commands
+Add every place where the existing ticket system creates tickets.
 
-- `/pixy-help` — interactive setup, billing, feature, and troubleshooting help
-- `/pixy-setup` — configure the ticket category and initialize the one-time Trial when eligible
-- `/pixy-billing` — show Trial, Expired, Pro, or Partner status and manual contact-owner instructions
-- `/pixy-learn` — manage server-specific knowledge; additions require Trial, Pro, or Partner
-- `/pixy-admins` — configure escalation roles, categories, and notifications
-- `/pixy-settings` — feature preferences, Groq credentials, model, and blocked terms
-- `/pixy-blacklist action:Add` — exclude a ticket-category channel from AI processing
-- `/pixy-blacklist action:Remove` — remove an existing blacklist entry
-- `/pixy-blacklist action:List` — show the current blacklist privately
-- `/pixy-clear` — delete operational guild data while retaining minimal billing continuity and audit records
+- **Category** — Pixy tracks normal text ticket channels created directly inside that category.
+- **Thread Parent** — Pixy tracks ticket threads created directly under the selected text, announcement, forum, or media channel.
 
-Payment choices in `/pixy-billing` only show a configured Discord owner mention and instructions to send a manual DM. Pixy never sends the owner a DM automatically, collects money, activates a plan, or stores PayPal/Vodafone credentials.
+A server can configure multiple Categories, multiple Thread Parents, or both. The admin stays on this step until all required sources are added, then presses **Next: AI Provider**.
 
-## Plan behavior
+### 2. AI Provider
+
+Groq is the provider currently exposed in production setup.
+
+- The guild supplies its own Groq API key.
+- Pixy validates the credential before saving it encrypted.
+- The saved secret is never displayed back to users.
+- The provider default model is usable immediately after a valid credential is saved.
+- **Change Model** verifies an alternate model against the connected account before saving it.
+
+The provider layer is structured so additional providers can be added later without changing the ticket-system concept, but other hosted providers are not currently exposed to guilds.
+
+### 3. Human Support
+
+Human Support is recommended but optional.
+
+The admin can configure:
+
+- an escalation category,
+- Pixy's escalation notification channel,
+- one or more support-role routes with descriptions.
+
+Or choose **Skip for Now**.
+
+The one-time Trial starts only when onboarding successfully completes. Re-running `/pixy-setup` after that opens the editable **Setup Dashboard** instead of restarting onboarding.
+
+## Public slash commands
+
+Pixy's public command surface is intentionally small:
+
+- `/pixy-setup` — first-run onboarding, then Ticket Sources, AI Provider, and Human Support management
+- `/pixy-settings` — Ticket Behavior, Knowledge, Safety, and Excluded Tickets
+- `/pixy-billing` — plan status, remaining time, capability availability, and manual activation/renewal instructions
+- `/pixy-help` — interactive help for setup, Threads, AI, billing, features, commands, and troubleshooting
+- `/pixy-reset` — administrator-only destructive reset of Pixy's operational guild data while retaining billing continuity/audit records
+
+Legacy `/pixy-admins`, `/pixy-learn`, `/pixy-mode`, `/pixy-blacklist`, and `/pixy-clear` commands are no longer part of the public command surface. Their useful workflows were consolidated into Setup/Settings, while the destructive reset was renamed to `/pixy-reset` for clarity.
+
+The startup command sync uses Discord's bulk command replacement, so deploying this version removes stale legacy application commands from the target registration scope.
+
+## `/pixy-settings`
+
+### Ticket Behavior
+
+- AI Replies
+- Smart Overlay / Full Ticket Control preset
+- Close Ticket
+- Rename Ticket
+- Human Escalation
+- Agent Actions
+
+Full Ticket Control runs a guild permission/setup preflight before it can be enabled. Thread tickets remain Smart Overlay regardless of the guild's channel-ticket mode.
+
+### Knowledge
+
+Admins can add, list, delete, or clear guild-specific Q&A and free-form entries. Existing knowledge can still be managed after expiry, but new additions and AI injection require Trial, Pro, or Partner entitlement.
+
+### Safety
+
+Admins can manage server-specific blocked terms and deliberate allow exceptions for false positives.
+
+### Excluded Tickets
+
+Admins can exclude an individual tracked channel or thread from Pixy without removing the entire Ticket Source, optionally storing a private admin reason. Removing the exclusion asks Pixy to reconcile and reactivate the ticket if it is still eligible.
+
+## Thread support
+
+Pixy supports:
+
+- Public Threads
+- Private Threads when Pixy has access to that specific thread
+- Announcement Threads
+
+Thread Parent Ticket Sources can be text, announcement, forum, or media channels.
+
+### Private Threads
+
+Prefer having the existing ticket system add Pixy to each private ticket thread. Pixy does not require broad `Manage Threads` permission by default because that permission is intentionally more powerful than normal Smart Overlay operation needs.
+
+### Thread safety invariant
+
+Pixy never performs lifecycle mutations on Thread tickets. Close and Rename are removed from the Thread control panel and are also rejected at execution time if a stale component or request tries to invoke them.
+
+Human escalation on a Thread is an overlay handoff: Pixy sends the notification, stores the escalation state, pauses automatic AI replies, and leaves the Thread itself in place.
+
+## Discord permissions
+
+The production target is scoped permissions rather than Administrator.
+
+### Baseline channel-ticket operation
+
+For configured Category sources, Pixy needs the effective ability to:
+
+- View Channel
+- Send Messages
+- Read Message History
+
+### Thread Parent operation
+
+For configured Thread Parent sources, Pixy needs:
+
+- View Channel
+- Send Messages in Threads
+- Read Message History
+
+Private Threads additionally require Pixy to have access to the specific Thread.
+
+### Full Ticket Control for channel tickets
+
+When Full Ticket Control is enabled for normal channel tickets, Pixy additionally preflights the permissions needed for lifecycle changes, including Manage Channels and Manage Roles / permission overwrites where applicable.
+
+### Human Support
+
+If Pixy's notification channel does not exist, creating it requires Manage Channels. Full-control escalation of a channel ticket also needs the destination/category permissions checked by the preflight.
+
+`Mention @everyone, @here, and All Roles` is **not required** for escalation to function. If a configured support role is not mentionable and Pixy cannot ping it, the handoff still completes and the notification shows the role name without a ping.
+
+## Billing behavior
+
+Payment choices in `/pixy-billing` only show a configured Discord owner mention and manual DM instructions. Pixy never automatically DMs the owner, collects money, activates a plan, or stores PayPal/Vodafone payment credentials.
 
 ### Trial, Pro, and Partner
 
-Premium plans can use:
+Premium entitlement can use:
 
-- Learned Q&A and free-form entries in AI context
-- New learned-knowledge additions
-- Validated AI-requested close, rename, and escalation actions
-- Premium ticket controls when the corresponding guild feature preference is enabled
+- learned Q&A/free-form context in AI prompts,
+- new learned-knowledge additions,
+- validated AI-requested ticket actions where the ticket surface supports them,
+- premium ticket controls according to guild settings.
 
 ### Expired
 
-Expired mode intentionally keeps the useful free assistant behavior:
+Expired mode intentionally keeps useful assistant behavior:
 
-- Generic AI replies remain available with the guild's configured Groq key
-- Ticket AI On/Off remains available
-- Existing learned entries can be listed, deleted, or cleared
+- generic AI replies remain available with a valid configured provider credential,
+- ticket AI On/Off remains available,
+- existing learned entries can still be listed, deleted, or cleared.
 
 Expired mode blocks:
 
-- Learned knowledge from being injected into AI prompts
-- New Q&A or free-form learned entries
-- Agent action schemas and execution
-- Premium ticket control options
+- learned knowledge injection into AI prompts,
+- new knowledge additions,
+- agent action schemas/execution,
+- premium action controls.
 
-Entitlement is checked at execution time, so stale menus, buttons, modals, or direct component IDs cannot bypass expiration.
+Entitlement is checked again at execution time, so stale menus, buttons, modals, or direct component IDs cannot bypass expiration.
 
-## Manual billing and owner commands
+## Manual billing owner commands
 
 Owner commands use the configured prefix, which is `^` in `.env.example`. Unauthorized users receive no response, usage hint, cooldown, or command-existence signal.
 
-- `^help` — DM the operator reference when possible, with channel fallback
-- `^activate <guild-id>` — start 30 days of Pro from now; rejects active Pro and recommends `^resub`
-- `^resub <guild-id>` — add 30 days after the current active Pro expiry
-- `^custom <guild-id> <duration>` — extend active Pro from its expiry or start from now
-- `^deactivate <guild-id>` — end Pro immediately while preserving Trial and Partner state
-- `^status <guild-id>` — show all billing layers and the latest audit event
-- `^partner add <guild-id>` — enable Partner while preserving Trial and Pro dates
-- `^partner remove <guild-id>` — disable Partner and reveal Pro, Trial, or Expired fallback
-- `^partner list` — list active Partner guilds with IDs and available guild names
+- `^help` — operator reference
+- `^activate <guild-id>` — start 30 days of Pro from now
+- `^resub <guild-id>` — add 30 days after current active Pro expiry
+- `^custom <guild-id> <duration>` — extend active Pro or start from now
+- `^deactivate <guild-id>` — end Pro immediately while preserving Trial/Partner state
+- `^status <guild-id>` — show billing layers and latest audit event
+- `^partner add <guild-id>` — enable Partner
+- `^partner remove <guild-id>` — disable Partner and reveal fallback state
+- `^partner list` — list active Partner guilds
 
-Supported custom duration units:
+Supported custom duration units are `d`, `w`, `m`, and `y` for days, seven-day weeks, 30-day months, and 365-day years. The resulting Pro expiry cannot be more than ten years from the mutation time.
 
-- `d` — days
-- `w` — seven-day weeks
-- `m` — 30-day months
-- `y` — 365-day years
-
-Examples: `14d`, `8w`, `6m`, `1y`. Values must be positive whole numbers. The resulting Pro expiry cannot be more than ten years from the mutation time.
-
-### Billing transaction safety
-
-Every owner billing mutation:
-
-1. Starts a Prisma interactive transaction with MySQL `Serializable` isolation.
-2. Locks the guild's billing row with `SELECT ... FOR UPDATE`.
-3. Reloads the locked state and computes the mutation from that current value.
-4. Writes the `GuildBilling` change and matching `BillingEvent` before commit.
-5. Retries bounded deadlock/write-conflict failures.
-6. Refreshes ticket controls only after commit, on a best-effort basis.
-
-This prevents simultaneous renewals from losing an extension. Audit failure rolls the mutation back; Discord refresh failure does not.
-
-See `docs/payments/CONCURRENCY.md` for the detailed strategy.
+Every owner billing mutation uses the repository's transactional billing flow with row locking, audit persistence, bounded write-conflict retry, and best-effort ticket-control refresh after commit. See `docs/payments/CONCURRENCY.md`.
 
 ## Safety behavior
 
-- Ticket history and learned server content are passed to the model as untrusted reference data, not system instructions.
-- Expired prompts contain no learned data, agent tool descriptions, action identifiers, or action JSON schemas.
+- Ticket history and learned server content are treated as untrusted reference data, not system instructions.
+- Expired prompts do not include learned data or agent-action schemas.
 - AI-generated text cannot ping users, roles, `@everyone`, or `@here`.
-- AI close requests are rejected unless the current user message explicitly asks to close the ticket.
-- Escalation preflights its role and notification channel, grants the selected support role ticket access, and rolls channel changes back when execution fails.
-- Billing outputs sanitize guild names and disable allowed mentions.
-- Passwords, Discord tokens, Groq keys, backup codes, and payment credentials must never be sent to payment owners or stored in learned content.
+- AI close requests require explicit close intent from the current user message.
+- Thread lifecycle actions are denied regardless of stale controls.
+- Human escalation uses safe notification and role-mention fallbacks.
+- Billing output sanitizes guild names and disables allowed mentions.
+- Passwords, Discord tokens, AI-provider keys, backup codes, and payment credentials must never be sent to payment owners or stored as learned content.
 
-## Data retention and Trial continuity
+## Operational reset and data retention
 
-`/pixy-clear` and guild removal delete operational guild data such as configuration, learned knowledge, tickets, routes, ignored channels, feature settings, encrypted Groq credentials, and detailed AI usage logs.
+`/pixy-reset` and guild removal delete operational guild data such as:
 
-They intentionally retain minimal billing continuity records:
+- Ticket Sources and setup state,
+- learned knowledge,
+- tracked tickets and exclusions,
+- support routes,
+- feature/safety settings,
+- encrypted provider credentials,
+- detailed AI usage logs.
+
+They intentionally retain minimal billing continuity:
 
 - Trial, Pro, and Partner dates/state in `GuildBilling`
-- Billing mutations and actors in `BillingEvent`
+- billing mutations and actors in `BillingEvent`
 
-This retention supports entitlement continuity, auditing, and prevention of repeat Trials after clear, removal, reinvitation, or reconfiguration. Active Pro or Partner entitlement remains available after the guild is reconfigured.
+This preserves entitlement continuity, audit history, and repeat-Trial prevention after reset, removal, reinvitation, or reconfiguration.
 
-The destructive development command `npm run db:clear -- --confirm` is different: it clears every application table, including billing tables, while preserving only Prisma migration history.
+The development command `npm run db:clear -- --confirm` is different: it clears all application tables, including billing tables, while preserving Prisma migration history.
 
 ## Tech stack
 
@@ -149,18 +262,7 @@ The destructive development command `npm run db:clear -- --confirm` is different
 - discord.js 14
 - Prisma ORM 7
 - MySQL 8.4 locally and in production
-- Groq SDK
-
-## Quick-start guides
-
-These guides are specific to **Pixy AI Tickets**:
-
-- [Windows quick start](docs/setup/WINDOWS.md) — PowerShell and Docker Desktop
-- [Ubuntu quick start](docs/setup/UBUNTU.md) — Docker Engine and Docker Compose
-- [Setup troubleshooting](docs/setup/TROUBLESHOOTING.md) — Docker, port 3306, Prisma, environment files, Discord commands, and credential recovery
-- [Setup guide index](docs/setup/README.md) — setup order and project-specific notes
-
-Pixy System is a separate Discord bot with its own setup documentation in the [`pixy-system`](https://github.com/riku-rio/pixy-system) repository.
+- Groq SDK as the currently exposed AI provider integration
 
 ## Environment variables
 
@@ -172,91 +274,39 @@ DISCORD_TOKEN=
 DISCORD_CLIENT_ID=
 PREFIX=^
 
-# Billing owners
 OWNERS=
 PAYPAL_OWNER_ID=
 VODAFONE_OWNER_ID=
 
-# Database - MySQL
 DATABASE_URL="mysql://pixy:pixy_local_password@127.0.0.1:3306/pixy"
-
-# Credential encryption
 PIXY_CREDENTIAL_ENCRYPTION_KEY=
 ```
 
-- `OWNERS` is a comma-separated list of Discord user IDs authorized to use silent owner-only prefix commands.
-- `PAYPAL_OWNER_ID` is the Discord user ID mentioned for the PayPal contact option.
-- `VODAFONE_OWNER_ID` is the Discord user ID mentioned for the Vodafone Cash contact option.
+`OWNERS` is a comma-separated list of Discord user IDs authorized for silent owner-only prefix commands. Payment-owner IDs are Discord contact targets only; they are not payment account identifiers.
 
-Production startup rejects missing or malformed owner configuration. These IDs route manual contact instructions only; they are not payment account identifiers and receive no automatic DM.
+`PIXY_CREDENTIAL_ENCRYPTION_KEY` must remain stable and be backed up separately from the database. A database backup without the matching key cannot recover encrypted guild provider credentials.
 
-### `NODE_ENV`
+Never commit Discord tokens, provider API keys, production database credentials, backups, payment information, or encryption keys.
 
-Use `NODE_ENV=development` while developing locally and `NODE_ENV=production` for a deployed bot. Only the exact value `production` enables production-specific validation.
+## Local development
 
-### Test database
-
-`TEST_DATABASE_URL` is optional for production and required when running the automated suite against the separate test database:
-
-```env
-TEST_DATABASE_URL="mysql://pixy:pixy_test_password@127.0.0.1:3307/pixy_test"
-```
-
-When `NODE_ENV=test`, the database adapter uses `TEST_DATABASE_URL` when present.
-
-### Credential encryption key
-
-`PIXY_CREDENTIAL_ENCRYPTION_KEY` must be one stable, base64-encoded 32-byte key. Generate it in PowerShell:
-
-```powershell
-$bytes = New-Object byte[] 32
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-[Convert]::ToBase64String($bytes)
-```
-
-Back up the encryption key separately from the MySQL backup. A database backup without the matching encryption key cannot recover stored guild Groq credentials.
-
-Never commit Discord tokens, API keys, production database credentials, database backups, payment information, or encryption keys.
-
-## Local development with Docker
-
-Set `NODE_ENV=development` and add `TEST_DATABASE_URL` to `.env`, then start the development and test databases:
+Set `NODE_ENV=development`, configure `TEST_DATABASE_URL`, then:
 
 ```powershell
 npm run db:up
-```
-
-Install dependencies and prepare the database:
-
-```powershell
 npm ci
 npm run prisma:generate
 npm run prisma:migrate
 npm run prisma:seed
-```
-
-Run tests and start Pixy:
-
-```powershell
 npm test
 npm start
 ```
 
-Stop the local databases:
+Stop local databases with:
 
 ```powershell
 npm run db:down
 ```
-
-## Clear all application data
-
-For a complete development/deployment reset, including billing and audit rows:
-
-```powershell
-npm run db:clear -- --confirm
-```
-
-The command discovers every application table, disables foreign-key checks safely, deletes all application rows, resets auto-increment counters, preserves the schema, and preserves Prisma's `_prisma_migrations` history. It is destructive and cannot be undone without a backup.
 
 ## Production deployment
 
@@ -268,14 +318,23 @@ npm run prisma:seed
 npm start
 ```
 
-Run tests separately when the deployment environment has a configured test database:
+Startup synchronizes the public slash-command set before logging the bot in. Use `prisma migrate deploy` through `npm run prisma:migrate` in production; do not run `prisma migrate dev` against production.
+
+Run the automated suite against the dedicated test database before deployment:
 
 ```powershell
 npm test
 ```
 
-Use `prisma migrate deploy` through `npm run prisma:migrate` in production. Do not run `prisma migrate dev` against production.
+See `docs/RELEASE_CHECKLIST.md` for the Phase 8 production smoke-test and rollout checklist.
+
+## Quick-start guides
+
+- [Windows quick start](docs/setup/WINDOWS.md)
+- [Ubuntu quick start](docs/setup/UBUNTU.md)
+- [Setup troubleshooting](docs/setup/TROUBLESHOOTING.md)
+- [Setup guide index](docs/setup/README.md)
 
 ## Data handling
 
-Pixy stores Discord guild, channel, role, message, and optional user IDs; server-provided knowledge; feature and routing settings; encrypted Groq credentials; ticket state; AI usage diagnostics; billing state/dates; and billing audit events. Ticket context is sent to the guild-selected Groq model when an AI response is requested. See `PRIVACY_POLICY.md` for retention, sharing, and deletion details.
+Pixy stores guild/channel/thread/role IDs, server-provided knowledge, feature and routing settings, encrypted provider credentials, ticket state, AI usage diagnostics, billing state/dates, and billing audit events. Ticket context is sent to the guild-configured AI provider when a response is requested. See `PRIVACY_POLICY.md` for retention, sharing, and deletion details.
