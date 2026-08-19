@@ -61,6 +61,23 @@ const ACCESS_PROFILES = Object.freeze({
   }),
 });
 
+const verifiedGuilds = new Map();
+
+function guildKey(guildOrId) {
+  const value = typeof guildOrId === "object" ? guildOrId?.id : guildOrId;
+  return value ? String(value) : null;
+}
+
+function clearSetupPermissionVerification(guildOrId) {
+  const key = guildKey(guildOrId);
+  if (key) verifiedGuilds.delete(key);
+}
+
+function getCachedSetupPermissionVerification(guildOrId) {
+  const key = guildKey(guildOrId);
+  return key ? verifiedGuilds.get(key) || null : null;
+}
+
 async function fetchFreshBotMember(guild) {
   if (!guild) return null;
 
@@ -84,14 +101,31 @@ async function fetchFreshBotMember(guild) {
   return guild.members?.me || null;
 }
 
-async function checkSetupPermissions(guild) {
+async function checkSetupPermissions(guild, options = {}) {
+  const key = guildKey(guild);
+  const force = options.force === true;
+  const cached = !force ? getCachedSetupPermissionVerification(key) : null;
+
+  if (cached) {
+    return {
+      ok: true,
+      code: null,
+      member: cached.member,
+      missing: [],
+      cached: true,
+      checkedAt: cached.checkedAt,
+    };
+  }
+
   const member = await fetchFreshBotMember(guild);
   if (!member?.permissions) {
+    clearSetupPermissionVerification(key);
     return {
       ok: false,
       code: "bot_member_unavailable",
       member: member || null,
       missing: [...SETUP_REQUIRED_PERMISSIONS],
+      cached: false,
     };
   }
 
@@ -99,11 +133,21 @@ async function checkSetupPermissions(guild) {
     ({ flag }) => !member.permissions.has(flag)
   );
 
+  if (missing.length === 0 && key) {
+    verifiedGuilds.set(key, {
+      member,
+      checkedAt: new Date(),
+    });
+  } else {
+    clearSetupPermissionVerification(key);
+  }
+
   return {
     ok: missing.length === 0,
     code: missing.length ? "missing_setup_permissions" : null,
     member,
     missing,
+    cached: false,
   };
 }
 
@@ -191,8 +235,10 @@ module.exports = {
   ACCESS_PROFILES,
   SETUP_REQUIRED_PERMISSIONS,
   checkSetupPermissions,
+  clearSetupPermissionVerification,
   ensureChannelAccess,
   fetchFreshBotMember,
+  getCachedSetupPermissionVerification,
   prepareHumanSupportCategoryAccess,
   prepareHumanSupportNotificationAccess,
   prepareTicketSourceAccess,
