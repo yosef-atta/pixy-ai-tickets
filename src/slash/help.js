@@ -53,7 +53,7 @@ const TOPICS = Object.freeze([
   },
   {
     label: "Features & Safety",
-    description: "Behavior, knowledge, safety, and excluded tickets",
+    description: "Behavior, reusable knowledge, safety, and excluded tickets",
     value: PAGES.FEATURES,
     emoji: "🛡️",
   },
@@ -276,7 +276,7 @@ function features(userId) {
       },
       {
         name: "Knowledge",
-        value: "Add, list, delete, or clear guild-specific Q&A and free-form knowledge. New additions and AI knowledge context require premium entitlement.",
+        value: "Knowledge is reusable AI context, **not exact FAQ matching**. A Q&A item gives Pixy an example question plus the fact behind it, so differently worded questions can still use that information. For packages, pricing, policies, or longer topics, one Free-form note can cover many related questions. **Quick Import** can add several Q&A facts at once.",
       },
       {
         name: "Safety",
