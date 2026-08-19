@@ -1,5 +1,4 @@
 const { prisma } = require("../config/prisma");
-const { ensureGuildConfig } = require("../config/guildConfigFoundation");
 const { DEFAULT_MAX_LEARNED_ITEMS } = require("../config/productDefaults");
 
 const KNOWLEDGE_TYPE_QNA = "qna";
@@ -79,9 +78,14 @@ async function listKnowledgeItems(guildId, options = {}) {
 
 async function assertWriteCapacity(guildId, options = {}) {
   const client = options.client || prisma;
-  const config = await ensureGuildConfig(guildId, { client });
-  const limit = getKnowledgeLimit(config);
+  const config = await client.guildConfig.findUnique({
+    where: { guildId },
+  });
+  if (!config) {
+    return { ok: false, code: "setup_required", limit: 0, total: 0 };
+  }
 
+  const limit = getKnowledgeLimit(config);
   if (limit <= 0) {
     return { ok: false, code: "knowledge_disabled", limit, total: 0 };
   }
