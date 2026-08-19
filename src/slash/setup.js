@@ -77,11 +77,29 @@ function formatNotificationSetupFailure(notification) {
   )];
 
   if (code === "missing_manage_channels_permission") {
-    return "Pixy needs **Manage Channels** to create or repair the Human Support notification channel. Grant it, then press **Create/Repair Notification Channel** again.";
+    return [
+      "Pixy needs **Manage Channels** to create or repair the Human Support notification channel.",
+      "Grant it to the bot role, then press **Create/Repair Notification Channel** again.",
+    ].join(" ");
   }
 
   if (code === "missing_notification_channel_permissions" && labels.length) {
-    return `Pixy is missing **${labels.join("** and **")}** in the Human Support notification channel. Grant ${labels.length === 1 ? "that permission" : "those permissions"} to the bot role or channel overrides, then press **Create/Repair Notification Channel** again.`;
+    const explanations = labels.map((label) => {
+      if (label === "View Channel") {
+        return "**View Channel** lets Pixy access the Human Support notification channel.";
+      }
+      if (label === "Send Messages") {
+        return "**Send Messages** lets Pixy post escalation alerts in that channel.";
+      }
+      return `**${label}** is required for the Human Support notification channel.`;
+    });
+
+    return [
+      `Pixy is still missing **${labels.join("** and **")}** in the Human Support notification channel.`,
+      ...explanations,
+      `Grant ${labels.length === 1 ? "that permission" : "those permissions"} to the bot role or the category/channel overrides, then press **Create/Repair Notification Channel** again.`,
+      "If you use ticket **Threads**, **Send Messages in Threads** is also recommended so Pixy can reply inside those ticket threads; it is not required for this notification channel itself.",
+    ].join(" ");
   }
 
   if (code === "notification_channel_create_failed") {
