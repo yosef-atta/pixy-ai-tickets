@@ -87,6 +87,7 @@ function createNotificationFixture(initialPermissions) {
   return {
     guild,
     channel,
+    botMember,
     client,
     updates,
     get roleRefreshes() {
@@ -125,6 +126,8 @@ test("notification setup reports the exact missing View Channel permission", asy
   assert.equal(result.ok, false);
   assert.equal(result.code, "missing_notification_channel_permissions");
   assert.deepEqual(result.missingPermissionLabels, ["View Channel"]);
+  assert.deepEqual(result.missingBasePermissionLabels, ["View Channel"]);
+  assert.deepEqual(result.blockedByOverwritePermissionLabels, []);
   assert.equal(fixture.updates.length, 0);
   assert.ok(fixture.roleRefreshes >= 1);
   assert.ok(fixture.memberFetches >= 1);
@@ -140,7 +143,10 @@ test("Repair reads a freshly fetched bot member instead of stale cached permissi
   };
   const freshMember = {
     id: "bot-1",
-    permissions: permissions(PermissionFlagsBits.ManageChannels),
+    permissions: permissions(
+      PermissionFlagsBits.ManageChannels,
+      PermissionFlagsBits.ViewChannel
+    ),
     notificationPermissions: permissions(PermissionFlagsBits.ViewChannel),
   };
   const cache = new Collection();
@@ -216,6 +222,7 @@ test("Repair succeeds after permissions are granted following an earlier failure
   assert.deepEqual(first.missingPermissionLabels, ["View Channel"]);
 
   fixture.setRoleRefreshHandler(() => {
+    fixture.botMember.permissions.add(PermissionFlagsBits.ViewChannel);
     current.add(PermissionFlagsBits.ViewChannel);
   });
 
@@ -235,18 +242,60 @@ test("Repair succeeds after permissions are granted following an earlier failure
   );
 });
 
-test("Human Support setup explains required channel permissions and thread recommendation", () => {
+test("View Channel guidance does not mention thread sending before the Send Messages stage", () => {
+  const message = formatNotificationSetupFailure({
+    ok: false,
+    code: "missing_notification_channel_permissions",
+    missingPermissionLabels: ["View Channel"],
+    missingBasePermissionLabels: ["View Channel"],
+    blockedByOverwritePermissionLabels: [],
+  });
+
+  assert.match(message, /View Channel/);
+  assert.match(message, /access the channel/i);
+  assert.match(message, /Create\/Repair Notification Channel/);
+  assert.doesNotMatch(message, /Send Messages in Threads/);
+});
+
+test("Send Messages stage explains channel sending and Thread ticket permission separately", () => {
   const message = formatNotificationSetupFailure({
     ok: false,
     code: "missing_notification_channel_permissions",
     missingPermissionLabels: ["Send Messages"],
+    missingBasePermissionLabels: ["Send Messages"],
+    blockedByOverwritePermissionLabels: [],
   });
 
-  assert.match(message, /Send Messages/);
+  assert.match(message, /now needs \*\*Send Messages\*\*/i);
   assert.match(message, /post escalation alerts/i);
-  assert.match(message, /Create\/Repair Notification Channel/);
   assert.match(message, /Send Messages in Threads/);
-  assert.match(message, /reply inside those ticket threads/i);
-  assert.match(message, /not required for this notification channel/i);
-  assert.doesNotMatch(message, /missing_notification_channel_permissions/);
+  assert.match(message, /reply inside Thread tickets/i);
+  assert.match(message, /not needed for this notification channel/i);
+  assert.match(message, /Create\/Repair Notification Channel/);
+  assert.doesNotMatch(message, /View Channel/);
+});
+
+test("permission diagnostics distinguish a bot-role grant from a blocking channel override", async () => {
+  const fixture = createNotificationFixture(
+    permissions(PermissionFlagsBits.SendMessages)
+  );
+  fixture.botMember.permissions.add(PermissionFlagsBits.ViewChannel);
+
+  const result = await getOrCreateEscalationNotificationChannel({
+    guild: fixture.guild,
+    categoryId: "category-1",
+    existingChannelId: fixture.channel.id,
+    client: fixture.client,
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.missingPermissionLabels, ["View Channel"]);
+  assert.deepEqual(result.missingBasePermissionLabels, []);
+  assert.deepEqual(result.blockedByOverwritePermissionLabels, ["View Channel"]);
+
+  const message = formatNotificationSetupFailure(result);
+  assert.match(message, /bot role already has \*\*View Channel\*\*/i);
+  assert.match(message, /overrides are still blocking/i);
+  assert.match(message, /set \*\*View Channel\*\* to \*\*Allow\*\*/i);
+  assert.doesNotMatch(message, /Send Messages in Threads/);
 });
