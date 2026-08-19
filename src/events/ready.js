@@ -12,9 +12,9 @@ module.exports = {
     for (const guild of client.guilds.cache.values()) {
       try {
         const result = await reconcileGuildTicketChannels(guild);
-        if (result.created || result.removed) {
+        if (result.created || result.removed || result.failed) {
           console.log(
-            `Reconciled Pixy tickets for ${guild.id}: ${result.created} tracked, ${result.removed} removed.`
+            `Reconciled Pixy tickets for ${guild.id}: ${result.created} tracked, ${result.removed} removed, ${result.failed} failed.`
           );
         }
       } catch (error) {
