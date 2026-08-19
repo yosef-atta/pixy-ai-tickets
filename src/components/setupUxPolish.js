@@ -98,7 +98,7 @@ function dashboardMenu(userId) {
         label: "Setup Health",
         description: "Review missing or broken setup resources",
         value: DASHBOARD_PAGES.HEALTH,
-        emoji: "🩺",
+        emoji: "🔍",
       },
     ],
   });
