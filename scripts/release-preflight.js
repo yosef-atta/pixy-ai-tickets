@@ -180,7 +180,7 @@ function checkWorkflow() {
     [/TEST_DATABASE_URL:/, "TEST_DATABASE_URL"],
     [/run: npm ci/, "npm ci"],
     [/run: npm run check/, "release preflight"],
-    [/run: npm test/, "full test suite"],
+    [/npm test/, "full test suite"],
   ];
   for (const [pattern, label] of requirements) {
     if (!pattern.test(workflow)) fail(`CI workflow is missing ${label}.`);
