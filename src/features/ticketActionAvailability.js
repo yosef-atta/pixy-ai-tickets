@@ -23,6 +23,8 @@ const ACTION_PREFIXES = Object.freeze({
 
 const DISABLED_MESSAGES = Object.freeze({
   ...SUBSCRIPTION_REJECTION_MESSAGES,
+  setup_required:
+    "Pixy core setup is not configured for this server. Run `/pixy-setup` first, then open `/pixy-settings` again.",
   agent_actions_disabled:
     "That ticket action isn't available right now. Please continue describing what you need here, and the support team can help.",
   close_ticket_disabled:
