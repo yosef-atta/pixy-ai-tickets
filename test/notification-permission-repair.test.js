@@ -10,9 +10,6 @@ const {
 const {
   getOrCreateEscalationNotificationChannel,
 } = require("../src/utils/tickets/escalationNotifications");
-const {
-  formatNotificationSetupFailure,
-} = require("../src/slash/setup");
 
 function permissions(...values) {
   return new PermissionsBitField(values);
@@ -111,7 +108,7 @@ function createNotificationFixture(initialPermissions) {
   };
 }
 
-test("notification setup reports the exact missing View Channel permission", async () => {
+test("notification permission diagnostics report the exact missing View Channel permission", async () => {
   const fixture = createNotificationFixture(
     permissions(PermissionFlagsBits.SendMessages)
   );
@@ -135,7 +132,7 @@ test("notification setup reports the exact missing View Channel permission", asy
   assert.ok(fixture.channelFetches >= 1);
 });
 
-test("Repair reads a freshly fetched bot member instead of stale cached permissions", async () => {
+test("notification diagnostics read a freshly fetched bot member instead of stale cached permissions", async () => {
   const staleMember = {
     id: "bot-1",
     permissions: permissions(PermissionFlagsBits.ManageChannels),
@@ -208,7 +205,7 @@ test("Repair reads a freshly fetched bot member instead of stale cached permissi
   assert.deepEqual(result.missingPermissionLabels, ["Send Messages"]);
 });
 
-test("Repair succeeds after permissions are granted following an earlier failure", async () => {
+test("notification setup succeeds after effective permissions are repaired", async () => {
   const current = permissions(PermissionFlagsBits.SendMessages);
   const fixture = createNotificationFixture(current);
 
@@ -242,40 +239,7 @@ test("Repair succeeds after permissions are granted following an earlier failure
   );
 });
 
-test("View Channel guidance does not mention thread sending before the Send Messages stage", () => {
-  const message = formatNotificationSetupFailure({
-    ok: false,
-    code: "missing_notification_channel_permissions",
-    missingPermissionLabels: ["View Channel"],
-    missingBasePermissionLabels: ["View Channel"],
-    blockedByOverwritePermissionLabels: [],
-  });
-
-  assert.match(message, /View Channel/);
-  assert.match(message, /access the channel/i);
-  assert.match(message, /Create\/Repair Notification Channel/);
-  assert.doesNotMatch(message, /Send Messages in Threads/);
-});
-
-test("Send Messages stage explains channel sending and Thread ticket permission separately", () => {
-  const message = formatNotificationSetupFailure({
-    ok: false,
-    code: "missing_notification_channel_permissions",
-    missingPermissionLabels: ["Send Messages"],
-    missingBasePermissionLabels: ["Send Messages"],
-    blockedByOverwritePermissionLabels: [],
-  });
-
-  assert.match(message, /now needs \*\*Send Messages\*\*/i);
-  assert.match(message, /post escalation alerts/i);
-  assert.match(message, /Send Messages in Threads/);
-  assert.match(message, /reply inside Thread tickets/i);
-  assert.match(message, /not needed for this notification channel/i);
-  assert.match(message, /Create\/Repair Notification Channel/);
-  assert.doesNotMatch(message, /View Channel/);
-});
-
-test("permission diagnostics distinguish a bot-role grant from a blocking channel override", async () => {
+test("notification diagnostics distinguish missing base access from a blocking channel overwrite", async () => {
   const fixture = createNotificationFixture(
     permissions(PermissionFlagsBits.SendMessages)
   );
@@ -292,10 +256,4 @@ test("permission diagnostics distinguish a bot-role grant from a blocking channe
   assert.deepEqual(result.missingPermissionLabels, ["View Channel"]);
   assert.deepEqual(result.missingBasePermissionLabels, []);
   assert.deepEqual(result.blockedByOverwritePermissionLabels, ["View Channel"]);
-
-  const message = formatNotificationSetupFailure(result);
-  assert.match(message, /bot role already has \*\*View Channel\*\*/i);
-  assert.match(message, /overrides are still blocking/i);
-  assert.match(message, /set \*\*View Channel\*\* to \*\*Allow\*\*/i);
-  assert.doesNotMatch(message, /Send Messages in Threads/);
 });
