@@ -32,7 +32,6 @@ const command = {
   data: new SlashCommandBuilder()
     .setName("reset")
     .setDescription("Reset Pixy operational data for this server.")
-    .setDMPermission(false)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   guildOnly: true,
   userPermissions: [PermissionFlagsBits.Administrator],
