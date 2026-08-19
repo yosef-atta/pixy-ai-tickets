@@ -8,6 +8,9 @@ const { aiConfig } = require("../../config/ai");
 const {
   getBotMember,
 } = require("./humanSupportPermissions");
+const {
+  isThreadTicketChannel,
+} = require("./ticketSurface");
 
 function getNotificationChannelName() {
   return String(
@@ -212,15 +215,16 @@ async function sendEscalationNotification({
     ? summary
     : {};
   const roleCanBePinged = await canMentionRoleInChannel(notificationChannel, role);
+  const threadTicket = isThreadTicketChannel(ticketChannel);
 
   const sections = [
     "🚨 **Ticket Escalated**",
     "",
-    `**Ticket Channel:** <#${ticketChannel.id}>`,
+    `**${threadTicket ? "Ticket Thread" : "Ticket Channel"}:** <#${ticketChannel.id}>`,
     `**Support Role:** <@&${role.id}>`,
     `**Support Team:** ${role.name}`,
     roleCanBePinged ? null : "**Role Ping:** Not sent — the role is not mentionable. The handoff still completed.",
-    `**New Ticket Name:** ${newName || ticketChannel.name}`,
+    `**${threadTicket ? "Thread Name" : "New Ticket Name"}:** ${newName || ticketChannel.name}`,
     routeId ? `**Route ID:** \`${routeId}\`` : null,
     requestedBy
       ? `**Requested By:** ${requestedBy.tag || requestedBy.username || requestedBy.id} (${requestedBy.id})`
