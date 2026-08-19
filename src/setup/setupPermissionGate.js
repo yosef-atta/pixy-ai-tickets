@@ -151,6 +151,18 @@ async function checkSetupPermissions(guild, options = {}) {
   };
 }
 
+function getBotPermissionOverwriteTarget(channel, member) {
+  const guild = channel?.guild || member?.guild || null;
+  const user = member?.user || null;
+
+  if (user && typeof guild?.roles?.botRoleFor === "function") {
+    const botRole = guild.roles.botRoleFor(user);
+    if (botRole) return botRole;
+  }
+
+  return user || member?.id || null;
+}
+
 async function ensureChannelAccess(channel, member, profile, reason) {
   if (!channel || !member || !profile) {
     return { ok: false, code: "invalid_channel_access_request" };
@@ -161,18 +173,24 @@ async function ensureChannelAccess(channel, member, profile, reason) {
     return { ok: false, code: "permission_overwrite_unavailable" };
   }
 
+  const target = getBotPermissionOverwriteTarget(channel, member);
+  if (!target) {
+    return { ok: false, code: "permission_overwrite_target_unavailable" };
+  }
+
   try {
     await manager.edit(
-      member.user || member.id,
+      target,
       profile,
       { reason: reason || "Pixy setup access" }
     );
-    return { ok: true, channel };
+    return { ok: true, channel, target };
   } catch (error) {
     return {
       ok: false,
       code: "permission_overwrite_failed",
       channel,
+      target,
       error,
     };
   }
@@ -194,12 +212,22 @@ async function prepareTicketSourceAccess(guild, channels, type) {
       profile,
       "Pixy Ticket Source setup access"
     );
-    if (!result.ok) failed.push({ channel, ...result });
+    if (!result.ok) {
+      failed.push({ channel, ...result });
+      console.warn(
+        `[Pixy setup] Could not auto-prepare Ticket Source access for ${channel?.id || "unknown"}: ${result.error?.code || result.code}${result.error?.message ? ` - ${result.error.message}` : ""}`
+      );
+    }
   }
 
+  // Ticket Source selection must not be blocked by a best-effort overwrite.
+  // The upfront permission gate verifies the bot role, while source-specific
+  // channel overrides are diagnosed separately by Setup Health/runtime checks.
   return {
-    ok: failed.length === 0,
-    code: failed.length ? "ticket_source_access_failed" : null,
+    ok: true,
+    code: null,
+    accessPrepared: failed.length === 0,
+    warningCode: failed.length ? "ticket_source_access_not_prepared" : null,
     member: status.member,
     failed,
   };
@@ -238,6 +266,7 @@ module.exports = {
   clearSetupPermissionVerification,
   ensureChannelAccess,
   fetchFreshBotMember,
+  getBotPermissionOverwriteTarget,
   getCachedSetupPermissionVerification,
   prepareHumanSupportCategoryAccess,
   prepareHumanSupportNotificationAccess,
