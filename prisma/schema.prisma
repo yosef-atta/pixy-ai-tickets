@@ -9,6 +9,7 @@ datasource db {
 model GuildConfig {
   id                              String                @id @default(cuid()) @db.VarChar(191)
   guildId                         String                @unique @db.VarChar(32)
+  /// Legacy single-category compatibility field. TicketSource is the new source of truth.
   ticketCategoryId                String?               @db.VarChar(32)
   enabled                         Boolean               @default(true)
   maxLearnedItems                 Int                   @default(50)
@@ -21,10 +22,57 @@ model GuildConfig {
   ticketChannels                  TicketChannel[]
   adminRoutes                     AdminRoute[]
   ignoredChannels                 GuildIgnoredChannel[]
+  ticketSources                   TicketSource[]
+  /// Legacy runtime compatibility field. GuildSetting.aiReplyEnabled remains authoritative until the AI config migration is fully wired.
   aiEnabled                       Boolean               @default(true)
+  /// Legacy provider compatibility field. GuildAiConfig is the new provider configuration foundation.
   aiProvider                      String                @default("groq") @db.VarChar(32)
+  /// Legacy model compatibility field. GuildAiConfig is the new provider configuration foundation.
   aiModel                         String?               @db.VarChar(191)
+  /// Legacy system-prompt compatibility field. GuildAiConfig is the new provider configuration foundation.
   aiSystemPrompt                  String?               @db.Text
+}
+
+model TicketSource {
+  id        String      @id @default(cuid()) @db.VarChar(191)
+  guildId   String      @db.VarChar(32)
+  type      String      @default("category") @db.VarChar(32)
+  sourceId  String      @db.VarChar(32)
+  enabled   Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  guild     GuildConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@unique([guildId, type, sourceId])
+  @@index([guildId, enabled])
+  @@index([type, sourceId])
+}
+
+model GuildAiConfig {
+  id                  String   @id @default(cuid()) @db.VarChar(191)
+  guildId             String   @unique @db.VarChar(32)
+  provider            String   @default("groq") @db.VarChar(32)
+  model               String?  @db.VarChar(191)
+  credentialEncrypted String?  @db.Text
+  credentialType      String   @default("groq-api-key") @db.VarChar(64)
+  systemPrompt        String?  @db.Text
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([provider])
+}
+
+model GuildSetupState {
+  id           String    @id @default(cuid()) @db.VarChar(191)
+  guildId      String    @unique @db.VarChar(32)
+  setupVersion Int       @default(2)
+  lastStep     String    @default("ticket_sources") @db.VarChar(32)
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([setupVersion])
+  @@index([completedAt])
 }
 
 model LearnedAnswer {
@@ -121,11 +169,13 @@ model GuildSetting {
   id                   String             @id @default(cuid()) @db.VarChar(191)
   guildId              String             @unique @db.VarChar(32)
   aiReplyEnabled       Boolean            @default(true)
-  closeTicketEnabled   Boolean            @default(true)
-  renameReviewEnabled  Boolean            @default(true)
+  closeTicketEnabled   Boolean            @default(false)
+  renameReviewEnabled  Boolean            @default(false)
   escalationEnabled    Boolean            @default(true)
   agentActionsEnabled  Boolean            @default(true)
+  /// Legacy Groq credential compatibility field. GuildAiConfig is the new credential foundation.
   groqApiKeyEncrypted  String?            @db.Text
+  /// Legacy model compatibility field. GuildAiConfig is the new model foundation.
   aiModel              String?            @db.VarChar(191)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
