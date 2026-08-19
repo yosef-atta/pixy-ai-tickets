@@ -44,7 +44,7 @@ async function listResolvedTicketSources(guildId, options = {}) {
     includeDisabled: options.includeDisabled,
   });
 
-  if (sources.length || options.includeLegacyFallback === false) return sources;
+  if (sources.length || options.includeLegacyFallback !== true) return sources;
 
   const config = await client.guildConfig.findUnique({
     where: { guildId: normalizedGuildId },
