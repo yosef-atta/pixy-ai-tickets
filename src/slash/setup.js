@@ -68,13 +68,19 @@ async function getCategory(guild, categoryId) {
   return fetched?.type === ChannelType.GuildCategory ? fetched : null;
 }
 
-function formatNotificationSetupFailure(notification) {
-  const code = String(notification?.code || "");
-  const labels = [...new Set(
-    (notification?.missingPermissionLabels || [])
+function uniqueLabels(values = []) {
+  return [...new Set(
+    values
       .map((label) => String(label || "").trim())
       .filter(Boolean)
   )];
+}
+
+function formatNotificationSetupFailure(notification) {
+  const code = String(notification?.code || "");
+  const labels = uniqueLabels(notification?.missingPermissionLabels || []);
+  const baseMissing = uniqueLabels(notification?.missingBasePermissionLabels || []);
+  const overwriteBlocked = uniqueLabels(notification?.blockedByOverwritePermissionLabels || []);
 
   if (code === "missing_manage_channels_permission") {
     return [
@@ -84,21 +90,45 @@ function formatNotificationSetupFailure(notification) {
   }
 
   if (code === "missing_notification_channel_permissions" && labels.length) {
-    const explanations = labels.map((label) => {
-      if (label === "View Channel") {
-        return "**View Channel** lets Pixy access the Human Support notification channel.";
+    if (labels.includes("View Channel")) {
+      if (overwriteBlocked.includes("View Channel")) {
+        return [
+          "Pixy's bot role already has **View Channel**, but the Human Support category or notification-channel overrides are still blocking effective access.",
+          "Open the parent category or notification channel permissions, add/select Pixy's bot role, set **View Channel** to **Allow**, then press **Create/Repair Notification Channel** again.",
+        ].join(" ");
       }
-      if (label === "Send Messages") {
-        return "**Send Messages** lets Pixy post escalation alerts in that channel.";
-      }
-      return `**${label}** is required for the Human Support notification channel.`;
-    });
+
+      return [
+        "Pixy is still missing **View Channel** for the Human Support notification channel.",
+        "**View Channel** lets Pixy access the channel where Human Support alerts are posted.",
+        "Grant it to the bot role, or explicitly Allow it in the category/channel overrides, then press **Create/Repair Notification Channel** again.",
+      ].join(" ");
+    }
+
+    if (labels.includes("Send Messages")) {
+      const sendSource = overwriteBlocked.includes("Send Messages")
+        ? "Pixy's bot role already has **Send Messages**, but the Human Support category or notification-channel overrides are blocking it. Set **Send Messages** to **Allow** for Pixy's role there."
+        : "Grant **Send Messages** to Pixy's bot role, or explicitly Allow it in the Human Support category/channel overrides.";
+
+      return [
+        "Pixy now needs **Send Messages** in the Human Support notification channel.",
+        "**Send Messages** lets Pixy post escalation alerts there.",
+        sendSource,
+        "If you use ticket **Threads**, also enable **Send Messages in Threads**. It is not needed for this notification channel, but it is required for Pixy to reply inside Thread tickets.",
+        "Then press **Create/Repair Notification Channel** again.",
+      ].join(" ");
+    }
+
+    const sourceHint = baseMissing.length
+      ? "Grant the missing permission to Pixy's bot role."
+      : overwriteBlocked.length
+        ? "The bot role has the permission, but a category/channel override is blocking it."
+        : "Grant the missing permission to the bot role or category/channel overrides.";
 
     return [
       `Pixy is still missing **${labels.join("** and **")}** in the Human Support notification channel.`,
-      ...explanations,
-      `Grant ${labels.length === 1 ? "that permission" : "those permissions"} to the bot role or the category/channel overrides, then press **Create/Repair Notification Channel** again.`,
-      "If you use ticket **Threads**, **Send Messages in Threads** is also recommended so Pixy can reply inside those ticket threads; it is not required for this notification channel itself.",
+      sourceHint,
+      "Then press **Create/Repair Notification Channel** again.",
     ].join(" ");
   }
 
