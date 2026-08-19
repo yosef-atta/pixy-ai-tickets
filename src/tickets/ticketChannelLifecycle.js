@@ -116,6 +116,28 @@ async function ensureTicketControlMessage(channel, ticket, options = {}) {
   return { ok: true, reused: false, message, payload };
 }
 
+async function createTicketRecord(client, guildId, channelId) {
+  try {
+    return {
+      ticket: await client.ticketChannel.create({
+        data: {
+          guildId,
+          channelId,
+          closed: false,
+          status: "open",
+          aiEnabled: true,
+        },
+      }),
+      created: true,
+    };
+  } catch (error) {
+    if (error?.code !== "P2002") throw error;
+    const concurrent = await client.ticketChannel.findUnique({ where: { channelId } });
+    if (!concurrent) throw error;
+    return { ticket: concurrent, created: false };
+  }
+}
+
 async function trackTicketChannel(channel, options = {}) {
   const client = options.client || prisma;
   const eligibility = options.eligibility || await resolveTicketChannelEligibility(channel, { client });
@@ -136,19 +158,19 @@ async function trackTicketChannel(channel, options = {}) {
 
   let created = false;
   if (!ticket) {
-    ticket = await client.ticketChannel.create({
-      data: {
-        guildId,
-        channelId,
-        closed: false,
-        status: "open",
-        aiEnabled: true,
-      },
-    });
-    created = true;
-  } else if (ticket.closed && options.reactivateClosed !== true) {
+    const createdResult = await createTicketRecord(client, guildId, channelId);
+    ticket = createdResult.ticket;
+    created = createdResult.created;
+  }
+
+  if (ticket.guildId !== guildId) {
+    return { tracked: false, code: "channel_owned_by_other_guild", ticket, eligibility };
+  }
+
+  if (ticket.closed && options.reactivateClosed !== true) {
     return { tracked: false, code: "ticket_closed", ticket, eligibility };
-  } else if (ticket.closed && options.reactivateClosed === true) {
+  }
+  if (ticket.closed && options.reactivateClosed === true) {
     ticket = await client.ticketChannel.update({
       where: { channelId },
       data: {
@@ -163,10 +185,19 @@ async function trackTicketChannel(channel, options = {}) {
 
   let control = null;
   if (created || options.ensureControls === "always") {
-    control = await ensureTicketControlMessage(channel, ticket, {
-      ...options,
-      client,
-    });
+    try {
+      control = await ensureTicketControlMessage(channel, ticket, {
+        ...options,
+        client,
+      });
+    } catch (error) {
+      if (created) {
+        await client.ticketChannel.deleteMany({
+          where: { guildId, channelId },
+        }).catch(() => null);
+      }
+      throw error;
+    }
   }
 
   return {
@@ -279,18 +310,20 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
       .filter((ticket) => eligibleChannels.has(ticket.channelId))
       .map((ticket) => ticket.channelId)
   );
+  const missingChannels = [...eligibleChannels.values()]
+    .filter(({ channel }) => !existingIds.has(channel.id));
 
   let created = 0;
-  const [entitlement, settings] = eligibleChannels.size
-    ? await Promise.all([
-        loadGuildEntitlementState(guildId, { client }),
-        client.guildSetting.findUnique({ where: { guildId } }),
-      ])
-    : [null, null];
+  let entitlement = null;
+  let settings = null;
+  if (missingChannels.length && options.ensureControls !== false) {
+    [entitlement, settings] = await Promise.all([
+      loadGuildEntitlementState(guildId, { client }),
+      client.guildSetting.findUnique({ where: { guildId } }),
+    ]);
+  }
 
-  for (const { channel, source } of eligibleChannels.values()) {
-    if (existingIds.has(channel.id)) continue;
-
+  for (const { channel, source } of missingChannels) {
     const result = await trackTicketChannel(channel, {
       client,
       existingTicket: null,
@@ -320,6 +353,7 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
 module.exports = {
   cleanupDeletedTicketChannel,
   collectionValues,
+  createTicketRecord,
   ensureTicketControlMessage,
   isSupportedTicketChannel,
   reconcileGuildTicketChannels,
