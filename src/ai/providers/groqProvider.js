@@ -1,6 +1,7 @@
 const GroqSDK = require("groq-sdk");
 const {
   DEFAULT_GROQ_MODEL,
+  getBlockedModelReason,
   listGroqModels,
   validateGroqApiKey,
   validateGroqChatModel,
@@ -13,7 +14,7 @@ const GROQ_CREDENTIAL_TYPE = "groq-api-key";
 
 function createMissingCredentialError() {
   const error = new Error(
-    "This server must configure a Groq API key in /pixy-settings."
+    "This server must configure a Groq API key in /pixy-setup."
   );
   error.code = "missing_guild_groq_api_key";
   error.provider = GROQ_PROVIDER_ID;
@@ -60,6 +61,18 @@ async function generateGroqReply({
   };
 }
 
+async function listGroqModelOptions(credential) {
+  const models = await listGroqModels(credential);
+  return models
+    .filter((model) => model?.active !== false && !getBlockedModelReason(model?.id))
+    .map((model) => ({
+      id: String(model?.id || "").trim(),
+      label: String(model?.id || "").trim(),
+      description: model?.owned_by ? `Groq model • ${model.owned_by}` : "Groq chat model",
+    }))
+    .filter((model) => model.id);
+}
+
 const groqProvider = Object.freeze({
   id: GROQ_PROVIDER_ID,
   displayName: "Groq",
@@ -70,6 +83,7 @@ const groqProvider = Object.freeze({
   credentialPlaceholder: "gsk_...",
   generateReply: generateGroqReply,
   listModels: listGroqModels,
+  listModelOptions: listGroqModelOptions,
   validateCredential: validateGroqApiKey,
   validateModel({ credential, modelId }) {
     return validateGroqChatModel({
@@ -84,4 +98,5 @@ module.exports = {
   GROQ_PROVIDER_ID,
   generateGroqReply,
   groqProvider,
+  listGroqModelOptions,
 };
