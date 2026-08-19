@@ -79,20 +79,6 @@ async function botCanManageChannel(channel) {
   return Boolean(permissions?.has(PermissionFlagsBits.ManageChannels));
 }
 
-async function botCanMentionRole(channel, role) {
-  if (!channel?.guild || !role) return false;
-
-  if (role.mentionable) return true;
-
-  const botMember = await getBotMember(channel.guild);
-
-  if (!botMember) return false;
-
-  const permissions = channel.permissionsFor(botMember);
-
-  return Boolean(permissions?.has(PermissionFlagsBits.MentionEveryone));
-}
-
 async function getCategoryById(guild, categoryId) {
   if (!guild || !categoryId) return null;
 
@@ -235,22 +221,9 @@ async function validateEscalateTicket({ actionRequest, message, ticket }) {
     };
   }
 
-  const canMentionRole = await botCanMentionRole(message.channel, role);
-
-  if (!canMentionRole) {
-    return {
-      ok: false,
-      code: "missing_role_mention_permission",
-    };
-  }
-
-  if (message.channel.manageable === false) {
-    return {
-      ok: false,
-      code: "channel_not_manageable",
-    };
-  }
-
+  // Role pinging is intentionally not a prerequisite for escalation. Discord
+  // can render the role reference without notifying it, while Pixy still
+  // completes the handoff and pauses AI replies.
   const reason = cleanSingleLine(actionRequest.data?.reason).slice(0, 500);
 
   const proposedName = getProposedTicketName(actionRequest.data);
@@ -339,16 +312,14 @@ async function validateTicketAction({ actionRequest, message, ticket }) {
     };
   }
 
-  const canManageChannel = await botCanManageChannel(message.channel);
-
-  if (!canManageChannel) {
-    return {
-      ok: false,
-      code: "missing_manage_channels_permission",
-    };
-  }
-
   if (action === TICKET_ACTIONS.CLOSE_TICKET) {
+    if (!(await botCanManageChannel(message.channel))) {
+      return {
+        ok: false,
+        code: "missing_manage_channels_permission",
+      };
+    }
+
     if (message.channel.deletable === false) {
       return {
         ok: false,
@@ -364,6 +335,13 @@ async function validateTicketAction({ actionRequest, message, ticket }) {
   }
 
   if (action === TICKET_ACTIONS.RENAME_TICKET) {
+    if (!(await botCanManageChannel(message.channel))) {
+      return {
+        ok: false,
+        code: "missing_manage_channels_permission",
+      };
+    }
+
     const proposedName = getProposedTicketName(actionRequest.data);
     const sanitizedName = buildUserPrefixedTicketName({
       message,
@@ -436,7 +414,7 @@ async function validateTicketAction({ actionRequest, message, ticket }) {
 }
 
 module.exports = {
-  validateTicketAction,
-  sanitizeTicketName,
   buildUserPrefixedTicketName,
+  sanitizeTicketName,
+  validateTicketAction,
 };
