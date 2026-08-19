@@ -30,6 +30,12 @@ const REQUIRED_RELEASE_FILES = [
   "PRIVACY_POLICY.md",
   "README.md",
   "prisma/mysql-migrations/20260819163000_phase_1_data_foundation/migration.sql",
+  "src/ai/providers/groqProvider.js",
+  "src/ai/providers/googleProvider.js",
+  "src/ai/providers/mistralProvider.js",
+  "src/ai/providers/providerRegistry.js",
+  "test/phase-10-providers.test.js",
+  "test/phase-10-knowledge.test.js",
 ];
 
 function fail(message) {
@@ -130,15 +136,39 @@ function checkReleaseCopy() {
   const readme = read("README.md");
   const privacy = read("PRIVACY_POLICY.md");
   const checklist = read("docs/RELEASE_CHECKLIST.md");
+  const help = read("src/slash/help.js");
+  const settings = read("src/slash/settings.js");
+  const billing = read("src/slash/billing.js");
 
   for (const [label, text] of [["README", readme], ["Privacy Policy", privacy]]) {
     if (!/Thread Parent/i.test(text)) fail(`${label} must describe Thread Parent sources.`);
     if (!/\/pixy-reset/.test(text)) fail(`${label} must describe /pixy-reset.`);
+    for (const provider of ["Groq", "Google Gemini", "Mistral"]) {
+      if (!text.includes(provider)) fail(`${label} must describe the ${provider} provider.`);
+    }
   }
 
+  if (!/not an exact FAQ/i.test(readme)) {
+    fail("README must explain that Knowledge is reusable AI context, not exact FAQ matching.");
+  }
+  if (!/Quick Import/i.test(readme) || !/Quick Import/i.test(settings)) {
+    fail("README and Settings must describe the Knowledge Quick Import flow.");
+  }
+  if (!/not exact FAQ matching/i.test(help)) {
+    fail("/pixy-help must explain the semantic Knowledge behavior.");
+  }
+  if (!/AI provider usage/i.test(billing) || /name:\s*"Groq usage"/.test(billing)) {
+    fail("/pixy-billing must use provider-neutral AI usage copy.");
+  }
   if (!/npm test/.test(checklist)) fail("Release checklist must require the full npm test suite.");
   if (!/billing/i.test(checklist) || !/reset/i.test(checklist) || !/thread/i.test(checklist)) {
     fail("Release checklist must cover billing, reset, and Thread smoke tests.");
+  }
+  for (const provider of ["Groq", "Google Gemini", "Mistral"]) {
+    if (!checklist.includes(provider)) fail(`Release checklist must include a ${provider} smoke test.`);
+  }
+  if (!/Fresh-install end-to-end pass/i.test(checklist)) {
+    fail("Release checklist must include the fresh-install end-to-end pass before partner rollout.");
   }
 }
 
