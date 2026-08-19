@@ -23,6 +23,7 @@ const {
 const { prisma } = require("../config/prisma");
 const {
   SETUP_STEPS,
+  TICKET_SOURCE_TYPES,
 } = require("../config/productDefaults");
 const {
   getOrCreateSetupState,
@@ -39,22 +40,26 @@ const {
   setGuildAiProvider,
 } = require("../config/guildAiConfig");
 const {
+  addThreadParents,
   addTicketCategories,
   completeOnboarding,
   configureEscalationCategory,
   createOrFindEscalationCategory,
   createOrFindTicketCategory,
-  listCategoryTicketSources,
+  listSetupTicketSources,
   moveSetupToAiProvider,
   moveSetupToHumanSupport,
   removeSupportRoutes,
-  removeTicketCategories,
+  removeTicketSources,
   setEscalationEnabled,
-  setTicketCategories,
   skipHumanSupportAndComplete,
   upsertSupportRoute,
   validateCategoryIds,
+  validateThreadParentIds,
 } = require("../setup/setupService");
+const {
+  isThreadParentChannel,
+} = require("../utils/tickets/ticketSurface");
 
 const EPHEMERAL = 64;
 const MODE = Object.freeze({
@@ -66,8 +71,11 @@ const PREFIX = Object.freeze({
   TICKET_OPEN: "setup4_ticket:",
   TICKET_SELECT_OPEN: "setup4_ticket_sel_open:",
   TICKET_SELECT: "setup4_ticket_sel:",
+  TICKET_THREAD_SELECT_OPEN: "setup4_thread_sel_open:",
+  TICKET_THREAD_SELECT: "setup4_thread_sel:",
   TICKET_CREATE: "setup4_ticket_create:",
   TICKET_REMOVE: "setup4_ticket_remove:",
+  TICKET_NEXT: "setup4_ticket_next:",
   AI_OPEN: "setup4_ai:",
   AI_PROVIDER: "setup4_ai_provider:",
   AI_CREDENTIAL: "setup4_ai_credential:",
@@ -109,6 +117,31 @@ function truncate(value, max = 900) {
   const text = cleanText(value);
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(1, max - 3)).trim()}...`;
+}
+
+function sourceTypeLabel(type) {
+  return type === TICKET_SOURCE_TYPES.THREAD_PARENT ? "Thread Parent" : "Category";
+}
+
+function encodeSourceRef(source) {
+  return `${source.type}|${source.sourceId}`;
+}
+
+function decodeSourceRef(value) {
+  const [type, sourceId] = String(value || "").split("|");
+  if (!Object.values(TICKET_SOURCE_TYPES).includes(type) || !sourceId) return null;
+  return { type, sourceId };
+}
+
+function isValidSourceChannel(source, channel) {
+  if (!source || !channel) return false;
+  if (source.type === TICKET_SOURCE_TYPES.CATEGORY) {
+    return channel.type === ChannelType.GuildCategory;
+  }
+  if (source.type === TICKET_SOURCE_TYPES.THREAD_PARENT) {
+    return isThreadParentChannel(channel);
+  }
+  return false;
 }
 
 async function assertOwner(interaction, userId) {
@@ -181,7 +214,7 @@ async function loadSetupOverview(guild) {
 
   const guildId = guild.id;
   const [sources, ai, config, setting, routes, billing] = await Promise.all([
-    listCategoryTicketSources(guildId),
+    listSetupTicketSources(guildId),
     getGuildAiConfig(guildId),
     prisma.guildConfig.findUnique({ where: { guildId } }),
     getOrCreateGuildSetting(guildId),
@@ -209,11 +242,11 @@ async function loadSetupOverview(guild) {
 
   const health = [];
   if (!sources.length) health.push("Ticket Sources are not configured.");
-  const missingSources = sourceDetails.filter(({ channel }) =>
-    !channel || channel.type !== ChannelType.GuildCategory
+  const missingSources = sourceDetails.filter(({ source, channel }) =>
+    !isValidSourceChannel(source, channel)
   );
   if (missingSources.length) {
-    health.push(`${missingSources.length} configured ticket source(s) no longer exist.`);
+    health.push(`${missingSources.length} configured ticket source(s) no longer exist or are no longer valid.`);
   }
   if (
     ai.providerDefinition.requiresCredential &&
@@ -251,12 +284,14 @@ async function loadSetupOverview(guild) {
 function formatTicketSources(sourceDetails) {
   if (!sourceDetails.length) return "Not configured";
   return sourceDetails
-    .slice(0, 12)
-    .map(({ source, channel }) =>
-      channel?.type === ChannelType.GuildCategory
-        ? `• **${channel.name}**`
-        : `• Missing category \`${source.sourceId}\``
-    )
+    .slice(0, 20)
+    .map(({ source, channel }) => {
+      const type = sourceTypeLabel(source.type);
+      if (isValidSourceChannel(source, channel)) {
+        return `• **${type}** — ${channel.name ? `**${channel.name}**` : `<#${channel.id}>`}`;
+      }
+      return `• **${type}** — Missing \`${source.sourceId}\``;
+    })
     .join("\n");
 }
 
@@ -268,6 +303,28 @@ function formatRoutes(routeDetails) {
       `• ${role ? `**${role.name}**` : `Missing role \`${route.roleId}\``} — ${truncate(route.description, 90)}`
     )
     .join("\n");
+}
+
+function buildTicketSourceRemoveMenu(sources, guild, userId, mode) {
+  if (!sources.length) return null;
+  const options = sources.slice(0, 25).map((source) => {
+    const channel = guild.channels.cache.get(source.sourceId);
+    const label = channel?.name || `Missing ${source.sourceId.slice(-6)}`;
+    return {
+      label: `${sourceTypeLabel(source.type)}: ${label}`.slice(0, 100),
+      value: encodeSourceRef(source),
+      description: `Remove this ${sourceTypeLabel(source.type).toLowerCase()} from Pixy Ticket Sources`.slice(0, 100),
+    };
+  });
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(scoped(PREFIX.TICKET_REMOVE, mode, userId))
+      .setPlaceholder("Remove configured Ticket Sources...")
+      .setMinValues(1)
+      .setMaxValues(options.length)
+      .addOptions(options)
+  );
 }
 
 async function renderDashboard(guild, userId, notice = null) {
@@ -345,7 +402,7 @@ async function renderDashboard(guild, userId, notice = null) {
 }
 
 async function renderOnboardingTicketSources(guild, userId, notice = null) {
-  const sources = await listCategoryTicketSources(guild.id);
+  const sources = await listSetupTicketSources(guild.id);
   await guild.channels.fetch().catch(() => null);
   const sourceDetails = sources.map((source) => ({
     source,
@@ -355,29 +412,46 @@ async function renderOnboardingTicketSources(guild, userId, notice = null) {
   const embed = new EmbedBuilder()
     .setTitle("Pixy Setup — 1/3 Ticket Sources")
     .setDescription([
-      "Choose every category where your existing ticket system creates ticket channels.",
-      "Pixy does not replace your ticket bot — it watches the ticket channels created inside these categories.",
+      "Add every place where your existing ticket system creates tickets.",
+      "Use **Categories** for ticket channels, and **Thread Parents** for ticket threads created under a text/announcement/forum/media channel.",
+      "Pixy works alongside the existing ticket system; Thread tickets always use non-destructive Smart Overlay behavior.",
       "",
-      sources.length ? "Current selection:" : "No ticket sources selected yet.",
+      sources.length ? "Current selection:" : "No Ticket Sources selected yet.",
       sources.length ? formatTicketSources(sourceDetails) : null,
     ].filter(Boolean).join("\n"));
 
-  const row = new ActionRowBuilder().addComponents(
+  const components = [];
+  const removeMenu = buildTicketSourceRemoveMenu(sources, guild, userId, MODE.ONBOARD);
+  if (removeMenu) components.push(removeMenu);
+
+  components.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(scoped(PREFIX.TICKET_SELECT_OPEN, MODE.ONBOARD, userId))
-      .setLabel("Select Categories")
+      .setLabel("Add Categories")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(scoped(PREFIX.TICKET_THREAD_SELECT_OPEN, MODE.ONBOARD, userId))
+      .setLabel("Add Thread Parents")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(scoped(PREFIX.TICKET_CREATE, MODE.ONBOARD, userId))
-      .setLabel("Create Automatically")
+      .setLabel("Create Category")
       .setStyle(ButtonStyle.Secondary)
-  );
+  ));
 
-  return { content: notice, embeds: [embed], components: [row] };
+  components.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(scoped(PREFIX.TICKET_NEXT, MODE.ONBOARD, userId))
+      .setLabel("Next: AI Provider")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(sources.length === 0)
+  ));
+
+  return { content: notice, embeds: [embed], components };
 }
 
 async function renderTicketSourceManager(guild, userId, notice = null) {
-  const sources = await listCategoryTicketSources(guild.id);
+  const sources = await listSetupTicketSources(guild.id);
   await guild.channels.fetch().catch(() => null);
   const sourceDetails = sources.map((source) => ({
     source,
@@ -387,7 +461,9 @@ async function renderTicketSourceManager(guild, userId, notice = null) {
   const embed = new EmbedBuilder()
     .setTitle("Ticket Sources")
     .setDescription([
-      "Pixy will treat ticket channels inside any configured category as eligible tickets.",
+      "Category sources track ticket channels created inside those categories.",
+      "Thread Parent sources track ticket threads created directly under the selected text/announcement/forum/media channel.",
+      "Thread tickets always stay in Smart Overlay for lifecycle safety, even if channel tickets use Full Ticket Control.",
       "",
       formatTicketSources(sourceDetails),
     ].join("\n"));
@@ -398,46 +474,53 @@ async function renderTicketSourceManager(guild, userId, notice = null) {
       .setLabel("Add Categories")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
+      .setCustomId(scoped(PREFIX.TICKET_THREAD_SELECT_OPEN, MODE.MANAGE, userId))
+      .setLabel("Add Thread Parents")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
       .setCustomId(scoped(PREFIX.TICKET_CREATE, MODE.MANAGE, userId))
       .setLabel("Create Category")
       .setStyle(ButtonStyle.Secondary),
     backButton(userId)
   );
 
-  const components = [buttons];
-  if (sources.length) {
-    const options = sources.slice(0, 25).map((source) => {
-      const channel = guild.channels.cache.get(source.sourceId);
-      return {
-        label: (channel?.name || `Missing ${source.sourceId.slice(-6)}`).slice(0, 100),
-        value: source.sourceId,
-        description: "Remove this category from Pixy ticket sources",
-      };
-    });
-    components.unshift(new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(scoped(PREFIX.TICKET_REMOVE, MODE.MANAGE, userId))
-        .setPlaceholder("Remove configured categories...")
-        .setMinValues(1)
-        .setMaxValues(options.length)
-        .addOptions(options)
-    ));
-  }
+  const components = [];
+  const removeMenu = buildTicketSourceRemoveMenu(sources, guild, userId, MODE.MANAGE);
+  if (removeMenu) components.push(removeMenu);
+  components.push(buttons);
 
   return { content: notice, embeds: [embed], components };
 }
 
 function renderTicketCategorySelect(userId, mode) {
   return {
-    content: mode === MODE.ONBOARD
-      ? "Select one or more categories used by your ticket system. Saving moves directly to AI setup."
-      : "Select one or more categories to add to Pixy ticket sources.",
+    content: "Select one or more categories where your ticket system creates ticket channels. Saving returns to Ticket Sources so you can add more source types before continuing.",
     embeds: [],
     components: [new ActionRowBuilder().addComponents(
       new ChannelSelectMenuBuilder()
         .setCustomId(scoped(PREFIX.TICKET_SELECT, mode, userId))
         .setPlaceholder("Select ticket categories...")
         .setChannelTypes(ChannelType.GuildCategory)
+        .setMinValues(1)
+        .setMaxValues(25)
+    )],
+  };
+}
+
+function renderThreadParentSelect(userId, mode) {
+  return {
+    content: "Select the parent channel(s) where your ticket system creates threads. Pixy will track ticket threads created directly under these parents.",
+    embeds: [],
+    components: [new ActionRowBuilder().addComponents(
+      new ChannelSelectMenuBuilder()
+        .setCustomId(scoped(PREFIX.TICKET_THREAD_SELECT, mode, userId))
+        .setPlaceholder("Select thread parent channels...")
+        .setChannelTypes(
+          ChannelType.GuildText,
+          ChannelType.GuildAnnouncement,
+          ChannelType.GuildForum,
+          ChannelType.GuildMedia
+        )
         .setMinValues(1)
         .setMaxValues(25)
     )],
@@ -711,7 +794,7 @@ async function renderHumanSupport(guild, userId, mode, notice = null) {
 
 function renderHumanCategorySelect(userId, mode) {
   return {
-    content: "Choose the category where escalated tickets should be moved. Pixy will also create or reuse its notification channel there.",
+    content: "Choose the category where escalated ticket channels should be moved. Thread ticket handoffs stay in their original thread; Pixy uses this category for the Human Support notification channel.",
     embeds: [],
     components: [new ActionRowBuilder().addComponents(
       new ChannelSelectMenuBuilder()
@@ -744,7 +827,7 @@ async function renderCompletion(guild, userId, humanConfigured, notice = null) {
   const [billing, ai, sources] = await Promise.all([
     loadBillingSummary(guild.id),
     getGuildAiConfig(guild.id),
-    listCategoryTicketSources(guild.id),
+    listSetupTicketSources(guild.id),
   ]);
   const embed = new EmbedBuilder()
     .setTitle("Pixy Setup Complete")
@@ -829,6 +912,14 @@ const command = {
       },
     },
     {
+      customIdPrefix: PREFIX.TICKET_THREAD_SELECT_OPEN,
+      async execute(interaction) {
+        const { mode, userId } = parseScoped(interaction.customId, PREFIX.TICKET_THREAD_SELECT_OPEN);
+        if (!(await assertOwner(interaction, userId))) return;
+        await editPanel(interaction, renderThreadParentSelect(userId, mode));
+      },
+    },
+    {
       customIdPrefix: PREFIX.TICKET_CREATE,
       async execute(interaction) {
         const { mode, userId } = parseScoped(interaction.customId, PREFIX.TICKET_CREATE);
@@ -846,32 +937,50 @@ const command = {
           return;
         }
 
-        if (mode === MODE.ONBOARD) {
-          await setTicketCategories(interaction.guild.id, [result.category.id], {
-            guild: interaction.guild,
-          });
-          await moveSetupToAiProvider(interaction.guild.id);
+        await addTicketCategories(interaction.guild.id, [result.category.id], {
+          guild: interaction.guild,
+          activate: mode !== MODE.ONBOARD,
+        });
+        const payload = mode === MODE.ONBOARD
+          ? await renderOnboardingTicketSources(
+              interaction.guild,
+              userId,
+              `Added **${result.category.name}**. Add any other Ticket Sources you need, then continue to AI Provider.`
+            )
+          : await renderTicketSourceManager(
+              interaction.guild,
+              userId,
+              `Added **${result.category.name}** to Ticket Sources.`
+            );
+        await editPanel(interaction, payload);
+      },
+    },
+    {
+      customIdPrefix: PREFIX.TICKET_NEXT,
+      async execute(interaction) {
+        const { userId } = parseScoped(interaction.customId, PREFIX.TICKET_NEXT);
+        if (!(await assertOwner(interaction, userId))) return;
+        await deferUpdate(interaction);
+        const sources = await listSetupTicketSources(interaction.guild.id);
+        if (!sources.length) {
           await editPanel(
             interaction,
-            await renderAiProvider(
-              interaction.guild.id,
+            await renderOnboardingTicketSources(
+              interaction.guild,
               userId,
-              MODE.ONBOARD,
-              `Ticket source saved as **${result.category.name}**.`
+              "Add at least one Category or Thread Parent before continuing."
             )
           );
           return;
         }
-
-        await addTicketCategories(interaction.guild.id, [result.category.id], {
-          guild: interaction.guild,
-        });
+        await moveSetupToAiProvider(interaction.guild.id);
         await editPanel(
           interaction,
-          await renderTicketSourceManager(
-            interaction.guild,
+          await renderAiProvider(
+            interaction.guild.id,
             userId,
-            `Added **${result.category.name}** to Ticket Sources.`
+            MODE.ONBOARD,
+            `Saved ${sources.length} Ticket Source${sources.length === 1 ? "" : "s"}.`
           )
         );
       },
@@ -1080,46 +1189,76 @@ const command = {
           return;
         }
 
-        if (mode === MODE.ONBOARD) {
-          await setTicketCategories(interaction.guild.id, selectedIds, { guild: interaction.guild });
-          await moveSetupToAiProvider(interaction.guild.id);
-          await editPanel(
-            interaction,
-            await renderAiProvider(
-              interaction.guild.id,
+        await addTicketCategories(interaction.guild.id, selectedIds, {
+          guild: interaction.guild,
+          activate: mode !== MODE.ONBOARD,
+        });
+        const payload = mode === MODE.ONBOARD
+          ? await renderOnboardingTicketSources(
+              interaction.guild,
               userId,
-              MODE.ONBOARD,
-              `Saved ${selectedIds.length} Ticket Source${selectedIds.length === 1 ? "" : "s"}.`
+              `Added ${selectedIds.length} Category source${selectedIds.length === 1 ? "" : "s"}. Add Thread Parents too if needed, then continue.`
             )
-          );
+          : await renderTicketSourceManager(
+              interaction.guild,
+              userId,
+              `Added ${selectedIds.length} Category source${selectedIds.length === 1 ? "" : "s"}.`
+            );
+        await editPanel(interaction, payload);
+      },
+    },
+    {
+      customIdPrefix: PREFIX.TICKET_THREAD_SELECT,
+      type: "channel",
+      async execute(interaction) {
+        const { mode, userId } = parseScoped(interaction.customId, PREFIX.TICKET_THREAD_SELECT);
+        if (!(await assertOwner(interaction, userId))) return;
+        await deferUpdate(interaction);
+        const selectedIds = interaction.values || [];
+        const parents = await validateThreadParentIds(interaction.guild, selectedIds);
+        if (!selectedIds.length || parents.length !== selectedIds.length) {
+          const payload = mode === MODE.ONBOARD
+            ? await renderOnboardingTicketSources(interaction.guild, userId, "One or more selected Thread Parents are no longer valid.")
+            : await renderTicketSourceManager(interaction.guild, userId, "One or more selected Thread Parents are no longer valid.");
+          await editPanel(interaction, payload);
           return;
         }
 
-        await addTicketCategories(interaction.guild.id, selectedIds, { guild: interaction.guild });
-        await editPanel(
-          interaction,
-          await renderTicketSourceManager(
-            interaction.guild,
-            userId,
-            `Added ${selectedIds.length} Ticket Source${selectedIds.length === 1 ? "" : "s"}.`
-          )
-        );
+        await addThreadParents(interaction.guild.id, selectedIds, {
+          guild: interaction.guild,
+          activate: mode !== MODE.ONBOARD,
+        });
+        const payload = mode === MODE.ONBOARD
+          ? await renderOnboardingTicketSources(
+              interaction.guild,
+              userId,
+              `Added ${selectedIds.length} Thread Parent${selectedIds.length === 1 ? "" : "s"}. Add any Category sources too if needed, then continue.`
+            )
+          : await renderTicketSourceManager(
+              interaction.guild,
+              userId,
+              `Added ${selectedIds.length} Thread Parent${selectedIds.length === 1 ? "" : "s"}.`
+            );
+        await editPanel(interaction, payload);
       },
     },
     {
       customIdPrefix: PREFIX.TICKET_REMOVE,
       type: "string",
       async execute(interaction) {
-        const { userId } = parseScoped(interaction.customId, PREFIX.TICKET_REMOVE);
+        const { mode, userId } = parseScoped(interaction.customId, PREFIX.TICKET_REMOVE);
         if (!(await assertOwner(interaction, userId))) return;
         await deferUpdate(interaction);
-        await removeTicketCategories(interaction.guild.id, interaction.values || [], {
+        const refs = (interaction.values || [])
+          .map(decodeSourceRef)
+          .filter(Boolean);
+        await removeTicketSources(interaction.guild.id, refs, {
           guild: interaction.guild,
         });
-        await editPanel(
-          interaction,
-          await renderTicketSourceManager(interaction.guild, userId, "Selected Ticket Sources were removed.")
-        );
+        const payload = mode === MODE.ONBOARD
+          ? await renderOnboardingTicketSources(interaction.guild, userId, "Selected Ticket Sources were removed.")
+          : await renderTicketSourceManager(interaction.guild, userId, "Selected Ticket Sources were removed.");
+        await editPanel(interaction, payload);
       },
     },
     {
@@ -1314,6 +1453,9 @@ module.exports = Object.assign(command, {
   buildCredentialModal,
   buildModelModal,
   buildRoleDescriptionModal,
+  decodeSourceRef,
+  encodeSourceRef,
+  isValidSourceChannel,
   loadHumanSupport,
   loadSetupOverview,
   parseScoped,
@@ -1322,5 +1464,7 @@ module.exports = Object.assign(command, {
   renderDashboard,
   renderHumanSupport,
   renderOnboardingTicketSources,
+  renderThreadParentSelect,
   renderTicketSourceManager,
+  sourceTypeLabel,
 });
