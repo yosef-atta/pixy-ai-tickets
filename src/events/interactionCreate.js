@@ -13,6 +13,7 @@ const TICKET_CONTROL_SETTING_FIELDS = new Set([
   "closeTicketEnabled",
   "renameReviewEnabled",
   "escalationEnabled",
+  "agentActionsEnabled",
 ]);
 
 function toArray(value) {
