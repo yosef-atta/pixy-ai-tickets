@@ -20,7 +20,7 @@ Pixy may store configuration selected by server administrators, including Ticket
 
 ### Server-provided knowledge
 
-Pixy may store questions and answers, free-form knowledge, titles, and supporting content intentionally submitted by server administrators. Administrators are responsible for ensuring this content is appropriate and does not contain secrets or unnecessary personal information.
+Pixy may store questions and answers, free-form knowledge, titles, and supporting content intentionally submitted by server administrators. Knowledge entries are used as reusable AI context and are not limited to exact question matching. Administrators are responsible for ensuring this content is appropriate and does not contain secrets or unnecessary personal information.
 
 ### Ticket and AI usage information
 
@@ -32,12 +32,12 @@ Thread tickets use Pixy's non-destructive Smart Overlay behavior for lifecycle s
 
 ### Guild-provided AI provider credentials and usage
 
-A server administrator may provide an AI provider credential for the server's AI requests. Groq is the provider currently exposed in production setup.
+A server administrator may provide an AI provider credential for the server's AI requests. Pixy currently exposes **Groq**, **Google Gemini**, and **Mistral** as selectable AI providers.
 
 - The credential is encrypted before database storage.
 - It is decrypted only when required for an authorized request.
 - The guild owns and is responsible for its provider account, usage, limits, and charges.
-- Pixy does not provide a shared Groq quota.
+- Pixy does not provide a shared AI-provider quota.
 
 Server administrators must not submit provider API keys in ordinary ticket messages, learned knowledge, public channels, payment messages, or support requests.
 
@@ -122,7 +122,7 @@ Pixy receives Discord data through the Discord API. Discord independently contro
 
 ### AI providers
 
-When a guild requests an AI response, relevant ticket context and eligible server-provided knowledge may be sent to the configured AI provider using that guild's credential. Groq is the provider currently exposed in production setup. The provider processes requests according to its own policies, which administrators should review before enabling AI features.
+When a guild requests an AI response, relevant ticket context and eligible server-provided knowledge may be sent to the configured AI provider using that guild's credential. Pixy currently supports Groq, Google Gemini, and Mistral in server setup. The selected provider processes requests according to its own policies, which administrators should review before enabling AI features.
 
 ### Hosting and database providers
 
@@ -189,7 +189,7 @@ Discord server administrators can:
 
 - Manage Ticket Sources, AI Provider configuration, and Human Support through `/pixy-setup`
 - Change ticket behavior, Knowledge, Safety, and Excluded Tickets through `/pixy-settings`
-- Add, list, delete, or clear learned information subject to plan availability
+- Add, quick-import, list, delete, or clear learned information subject to plan availability
 - Replace or remove the guild's saved AI provider credential
 - Disable individual AI and ticket feature preferences
 - Exclude individual tracked channels or threads from AI processing
