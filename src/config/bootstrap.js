@@ -8,6 +8,14 @@ const {
 } = require("../security/credentialEncryption");
 
 const SLASH_COMMAND_PREFIX = "pixy-";
+const PUBLIC_SLASH_COMMANDS = Object.freeze([
+  "setup",
+  "settings",
+  "billing",
+  "help",
+  "reset",
+]);
+const PUBLIC_SLASH_COMMAND_SET = new Set(PUBLIC_SLASH_COMMANDS);
 
 function getAllJsFiles(dirPath, arrayOfFiles = []) {
   const files = fs.readdirSync(dirPath).sort((a, b) => a.localeCompare(b));
@@ -30,6 +38,18 @@ function toArray(value) {
 
 function getCommandName(command) {
   return command?.data?.name || command?.name || "unknown";
+}
+
+function getBaseSlashCommandName(command) {
+  const currentName = String(getCommandName(command) || "").toLowerCase();
+  if (!currentName || currentName === "unknown") return currentName;
+  return currentName.startsWith(SLASH_COMMAND_PREFIX)
+    ? currentName.slice(SLASH_COMMAND_PREFIX.length)
+    : currentName;
+}
+
+function isPublicSlashCommand(command) {
+  return PUBLIC_SLASH_COMMAND_SET.has(getBaseSlashCommandName(command));
 }
 
 function getProductionSlashCommandName(command) {
@@ -108,9 +128,18 @@ function registerInteractionHandlers(client, command) {
 }
 
 function commandToJSON(command) {
-  return typeof command.data?.toJSON === "function"
+  const json = typeof command.data?.toJSON === "function"
     ? command.data.toJSON()
-    : command.data;
+    : { ...(command.data || {}) };
+
+  if (command.guildOnly === true) {
+    return {
+      ...json,
+      dm_permission: false,
+    };
+  }
+
+  return json;
 }
 
 async function syncCommands({ token, clientId, guildId }, commands, prefixCount) {
@@ -125,6 +154,7 @@ async function syncCommands({ token, clientId, guildId }, commands, prefixCount)
     console.log(`Synced ${body.length} global slash command(s).`);
   }
 
+  console.log(`Public slash commands: ${body.map((command) => command.name).join(", ")}.`);
   console.log(`Loaded ${prefixCount} prefix command(s).`);
 }
 
@@ -199,6 +229,13 @@ async function bootstrap() {
           continue;
         }
 
+        if (!isPublicSlashCommand(command)) {
+          console.warn(
+            `Skipped non-public slash command ${getCommandName(command)} from ${file}.`
+          );
+          continue;
+        }
+
         const commandName = applyProductionSlashCommandName(command);
         commands.push(command);
         client.commands.set(commandName, command);
@@ -235,4 +272,13 @@ async function bootstrap() {
   }
 }
 
-module.exports = { bootstrap };
+module.exports = {
+  PUBLIC_SLASH_COMMANDS,
+  SLASH_COMMAND_PREFIX,
+  applyProductionSlashCommandName,
+  bootstrap,
+  commandToJSON,
+  getBaseSlashCommandName,
+  getProductionSlashCommandName,
+  isPublicSlashCommand,
+};
