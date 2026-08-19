@@ -248,7 +248,7 @@ test("guild reconciliation imports missed tickets, skips exclusions, and removes
   assert.equal(created[0].channelId, channelB.id);
   assert.deepEqual(cleanupWhere, {
     guildId: GUILD_ID,
-    channelId: { notIn: [channelA.id, channelB.id] },
+    channelId: { in: ["stale-channel"] },
   });
 });
 
@@ -276,7 +276,11 @@ test("deleting a Discord ticket channel clears tracking and its stale exclusion"
   };
 
   const result = await cleanupDeletedTicketChannel(channel, { client });
-  assert.deepEqual(result, { ticketDeleted: 1, blacklistDeleted: 1 });
+  assert.deepEqual(result, {
+    ticketDeleted: 1,
+    ignoredDeleted: 1,
+    blacklistDeleted: 1,
+  });
   assert.deepEqual(calls, [
     ["ticket", { guildId: GUILD_ID, channelId: channel.id }],
     ["ignored", { guildId: GUILD_ID, channelId: channel.id }],
