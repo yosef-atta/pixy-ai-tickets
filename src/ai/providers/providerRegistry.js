@@ -1,4 +1,6 @@
+const { googleProvider } = require("./googleProvider");
 const { groqProvider } = require("./groqProvider");
+const { mistralProvider } = require("./mistralProvider");
 
 function normalizeProviderId(value) {
   const id = String(value || "").trim().toLowerCase();
@@ -88,7 +90,11 @@ function createProviderRegistry(definitions = []) {
   });
 }
 
-const providerRegistry = createProviderRegistry([groqProvider]);
+const providerRegistry = createProviderRegistry([
+  groqProvider,
+  googleProvider,
+  mistralProvider,
+]);
 
 function getAiProvider(providerId) {
   return providerRegistry.get(providerId);
@@ -126,10 +132,34 @@ async function validateProviderModel(providerId, { credential, modelId } = {}) {
   return provider.validateModel({ credential, modelId: normalizedModel });
 }
 
+async function listProviderModelOptions(providerId, credential) {
+  const provider = getAiProvider(providerId);
+  if (typeof provider.listModelOptions === "function") {
+    const options = await provider.listModelOptions(credential);
+    return Array.isArray(options) ? options : [];
+  }
+  if (typeof provider.listModels !== "function") return [];
+
+  const models = await provider.listModels(credential);
+  const rows = Array.isArray(models) ? models : Array.isArray(models?.data) ? models.data : [];
+  return rows
+    .map((model) => {
+      const id = String(model?.id || model?.name || "").replace(/^models\//, "").trim();
+      if (!id) return null;
+      return {
+        id,
+        label: String(model?.displayName || id).trim() || id,
+        description: String(model?.description || "").trim() || null,
+      };
+    })
+    .filter(Boolean);
+}
+
 module.exports = {
   createProviderRegistry,
   getAiProvider,
   listAiProviders,
+  listProviderModelOptions,
   normalizeProviderDefinition,
   normalizeProviderId,
   providerRegistry,
