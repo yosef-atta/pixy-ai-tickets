@@ -27,15 +27,14 @@ async function generateAiReply({
   let selectedModel = model || null;
   let selectedCredential = credential || apiKey || null;
 
-  if (resolvedGuildId) {
+  // Guild configuration is authoritative whenever the caller did not provide
+  // an explicit credential. This keeps legacy callers safe while allowing the
+  // selected provider to change without touching every AI call site.
+  if (resolvedGuildId && !selectedCredential) {
     const guildConfig = await getGuildAiConfig(resolvedGuildId);
-    if (!selectedProvider) selectedProvider = guildConfig.provider;
-    if (!selectedModel && selectedProvider === guildConfig.provider) {
-      selectedModel = guildConfig.model;
-    }
-    if (!selectedCredential && selectedProvider === guildConfig.provider) {
-      selectedCredential = guildConfig.credential;
-    }
+    selectedProvider = guildConfig.provider;
+    selectedModel = guildConfig.model;
+    selectedCredential = guildConfig.credential;
   }
 
   selectedProvider = selectedProvider || aiConfig.provider;
