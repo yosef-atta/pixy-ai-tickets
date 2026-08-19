@@ -11,8 +11,15 @@ const {
 } = require("discord.js");
 const { prisma } = require("../config/prisma");
 const { defaultAiConfig, getGuildAiConfig, getOrCreateGuildSetting } = require("../config/ai");
-const { DEFAULT_GROQ_MODEL, validateGroqApiKey, validateGroqChatModel } = require("../ai/groqModels");
-const { encryptCredential } = require("../security/credentialEncryption");
+const {
+  removeGuildAiCredential,
+  saveGuildAiCredential,
+  saveGuildAiModel,
+} = require("../config/guildAiConfig");
+const {
+  validateProviderCredential,
+  validateProviderModel,
+} = require("../ai/providers/providerRegistry");
 const { getBlockedTermsStats, addGuildBlockedTerm, removeGuildBlockedTerm } = require("../utils/blockedTerms");
 const { createStringSelectMenus } = require("../utils/selectMenuHelper");
 const { BILLING_PLANS } = require("../billing/constants");
@@ -71,10 +78,18 @@ function getFeaturePlanDescription(summary) {
   ].join("\n");
 }
 
+function credentialStatusLabel(config) {
+  if (config.credentialStatus === "configured") return "Configured";
+  if (config.credentialStatus === "invalid") return "Invalid";
+  if (config.credentialStatus === "not_required") return "Not required";
+  return "Required";
+}
+
 async function renderHome(guildId, userId) {
-  const [setting, billing] = await Promise.all([
+  const [setting, billing, ai] = await Promise.all([
     getOrCreateGuildSetting(guildId),
     loadBillingSummary(guildId),
+    getGuildAiConfig(guildId),
   ]);
   const enabledCount = FEATURES.filter(({ field }) => setting[field]).length;
   const embed = new EmbedBuilder()
@@ -84,8 +99,8 @@ async function renderHome(guildId, userId) {
     .addFields(
       { name: "Plan", value: billing.planLabel, inline: true },
       { name: "Features", value: `${enabledCount}/${FEATURES.length} enabled`, inline: true },
-      { name: "Groq API", value: setting.groqApiKeyEncrypted ? "Configured" : "Required", inline: true },
-      { name: "Model", value: `\`${setting.aiModel || DEFAULT_GROQ_MODEL}\``, inline: true },
+      { name: "AI Provider", value: `${ai.providerDefinition.displayName} — ${credentialStatusLabel(ai)}`, inline: true },
+      { name: "Model", value: `\`${ai.model}\``, inline: true },
       { name: "Billing", value: "Use `/pixy-billing` for dates, remaining time, and activation instructions.", inline: false }
     );
   const menus = createStringSelectMenus({
@@ -94,7 +109,7 @@ async function renderHome(guildId, userId) {
     options: [
       { label: "Features", description: "Enable or disable Pixy's server preferences", value: PAGES.FEATURES, emoji: "📝" },
       { label: "Escalation", description: "View escalation configuration", value: PAGES.ESCALATION, emoji: "🚨" },
-      { label: "AI API", description: "Manage the guild-owned Groq key and model", value: PAGES.AIAPI, emoji: "🔑" },
+      { label: "AI Provider", description: "Manage the selected provider credential and model", value: PAGES.AIAPI, emoji: "🔑" },
       { label: "Bad Words", description: "Manage custom blocked terms", value: PAGES.BADWORDS, emoji: "🛡️" },
     ],
   });
@@ -159,24 +174,46 @@ async function renderEscalation(guildId, userId) {
 
 async function renderAiApi(guildId, userId) {
   const config = await getGuildAiConfig(guildId);
-  const configured = config.credentialStatus === "configured";
+  const provider = config.providerDefinition;
+  const configured = config.credentialStatus === "configured" || config.credentialStatus === "not_required";
   return {
     content: null,
     embeds: [new EmbedBuilder()
-      .setTitle("🔑 AI API Settings")
+      .setTitle("🔑 AI Provider Settings")
       .setColor(0xfee75c)
-      .setDescription("Every server supplies its own Groq API key and is responsible for its own Groq usage and limits. Existing keys are never displayed.")
+      .setDescription(
+        provider.requiresCredential
+          ? `This server currently uses **${provider.displayName}** and supplies its own provider credential. Existing credentials are never displayed.`
+          : `This server currently uses **${provider.displayName}**. No external credential is required.`
+      )
       .addFields(
-        { name: "API Key", value: configured ? "✅ Configured" : config.credentialStatus === "invalid" ? "⚠️ Invalid" : "❌ Required", inline: true },
-        { name: "Model", value: `\`${config.groq.model}\``, inline: true },
-        { name: "Source", value: config.setting.aiModel ? "Server override" : "Default", inline: true }
+        { name: "Provider", value: provider.displayName, inline: true },
+        { name: "Credential", value: config.credentialStatus === "configured" ? "✅ Configured" : config.credentialStatus === "invalid" ? "⚠️ Invalid" : config.credentialStatus === "not_required" ? "✅ Not required" : "❌ Required", inline: true },
+        { name: "Model", value: `\`${config.model}\``, inline: true },
+        { name: "Model Source", value: config.modelSource === "guild" ? "Server override" : "Provider default", inline: true }
       )],
     components: [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(scoped(PREFIX.API_SET, userId)).setLabel(configured ? "Replace API Key" : "Set API Key").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(scoped(PREFIX.API_REMOVE, userId)).setLabel("Remove API Key").setStyle(ButtonStyle.Danger).setDisabled(!config.setting.groqApiKeyEncrypted),
-        new ButtonBuilder().setCustomId(scoped(PREFIX.MODEL_SET, userId)).setLabel("Set Model").setStyle(ButtonStyle.Primary).setDisabled(!configured),
-        new ButtonBuilder().setCustomId(scoped(PREFIX.MODEL_RESET, userId)).setLabel("Reset Model").setStyle(ButtonStyle.Secondary).setDisabled(!config.setting.aiModel)
+        new ButtonBuilder()
+          .setCustomId(scoped(PREFIX.API_SET, userId))
+          .setLabel(config.credentialStatus === "configured" ? "Replace Credential" : "Set Credential")
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(!provider.requiresCredential),
+        new ButtonBuilder()
+          .setCustomId(scoped(PREFIX.API_REMOVE, userId))
+          .setLabel("Remove Credential")
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(!config.aiConfigRecord?.credentialEncrypted),
+        new ButtonBuilder()
+          .setCustomId(scoped(PREFIX.MODEL_SET, userId))
+          .setLabel("Set Model")
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(provider.requiresCredential && !configured),
+        new ButtonBuilder()
+          .setCustomId(scoped(PREFIX.MODEL_RESET, userId))
+          .setLabel("Reset Model")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(config.modelSource !== "guild")
       ),
       navigation(userId),
     ],
@@ -232,6 +269,28 @@ function singleInputModal({ customId, title, inputId, label, placeholder, maxLen
   if (placeholder) input.setPlaceholder(placeholder);
   if (maxLength) input.setMaxLength(maxLength);
   return new ModalBuilder().setCustomId(customId).setTitle(title).addComponents(new ActionRowBuilder().addComponents(input));
+}
+
+function credentialModal(userId, config) {
+  const provider = config.providerDefinition;
+  return singleInputModal({
+    customId: scoped(PREFIX.API_MODAL, userId),
+    title: `Set ${provider.displayName} Credential`.slice(0, 45),
+    inputId: "provider_credential",
+    label: provider.credentialLabel.slice(0, 45),
+    placeholder: provider.credentialPlaceholder || undefined,
+  });
+}
+
+function modelModal(userId, config) {
+  const provider = config.providerDefinition;
+  return singleInputModal({
+    customId: scoped(PREFIX.MODEL_MODAL, userId),
+    title: `Set ${provider.displayName} Model`.slice(0, 45),
+    inputId: "provider_model",
+    label: "Exact model ID",
+    placeholder: provider.defaultModel,
+  });
 }
 
 module.exports = {
@@ -310,10 +369,46 @@ module.exports = {
   buttonHandlers: [
     { customIdPrefix: PREFIX.HOME, async execute(interaction) { const userId = interaction.customId.slice(PREFIX.HOME.length); if (await assertOwner(interaction, userId)) await interaction.update(await render(PAGES.HOME, interaction.guild.id, userId)); } },
     { customIdPrefix: PREFIX.CLOSE, async execute(interaction) { const userId = interaction.customId.slice(PREFIX.CLOSE.length); if (await assertOwner(interaction, userId)) await interaction.update({ content: "Settings panel closed.", embeds: [], components: [] }); } },
-    { customIdPrefix: PREFIX.API_SET, async execute(interaction) { const userId = interaction.customId.slice(PREFIX.API_SET.length); if (await assertOwner(interaction, userId)) await interaction.showModal(singleInputModal({ customId: scoped(PREFIX.API_MODAL, userId), title: "Set Groq API Key", inputId: "groq_api_key", label: "Groq API key", placeholder: "gsk_..." })); } },
-    { customIdPrefix: PREFIX.MODEL_SET, async execute(interaction) { const userId = interaction.customId.slice(PREFIX.MODEL_SET.length); if (await assertOwner(interaction, userId)) await interaction.showModal(singleInputModal({ customId: scoped(PREFIX.MODEL_MODAL, userId), title: "Set Groq Model", inputId: "groq_model", label: "Exact Groq model ID", placeholder: DEFAULT_GROQ_MODEL })); } },
-    { customIdPrefix: PREFIX.API_REMOVE, async execute(interaction) { const userId = interaction.customId.slice(PREFIX.API_REMOVE.length); if (!(await assertOwner(interaction, userId))) return; await prisma.guildSetting.update({ where: { guildId: interaction.guild.id }, data: { groqApiKeyEncrypted: null, aiModel: null } }); await interaction.update(await render(PAGES.AIAPI, interaction.guild.id, userId)); } },
-    { customIdPrefix: PREFIX.MODEL_RESET, async execute(interaction) { const userId = interaction.customId.slice(PREFIX.MODEL_RESET.length); if (!(await assertOwner(interaction, userId))) return; await prisma.guildSetting.update({ where: { guildId: interaction.guild.id }, data: { aiModel: null } }); await interaction.update(await render(PAGES.AIAPI, interaction.guild.id, userId)); } },
+    {
+      customIdPrefix: PREFIX.API_SET,
+      async execute(interaction) {
+        const userId = interaction.customId.slice(PREFIX.API_SET.length);
+        if (!(await assertOwner(interaction, userId))) return;
+        const config = await getGuildAiConfig(interaction.guild.id);
+        if (!config.providerDefinition.requiresCredential) {
+          await interaction.reply({ content: `${config.providerDefinition.displayName} does not require an external credential.`, flags: EPHEMERAL });
+          return;
+        }
+        await interaction.showModal(credentialModal(userId, config));
+      },
+    },
+    {
+      customIdPrefix: PREFIX.MODEL_SET,
+      async execute(interaction) {
+        const userId = interaction.customId.slice(PREFIX.MODEL_SET.length);
+        if (!(await assertOwner(interaction, userId))) return;
+        const config = await getGuildAiConfig(interaction.guild.id);
+        await interaction.showModal(modelModal(userId, config));
+      },
+    },
+    {
+      customIdPrefix: PREFIX.API_REMOVE,
+      async execute(interaction) {
+        const userId = interaction.customId.slice(PREFIX.API_REMOVE.length);
+        if (!(await assertOwner(interaction, userId))) return;
+        await removeGuildAiCredential(interaction.guild.id, { clearModel: true });
+        await interaction.update(await render(PAGES.AIAPI, interaction.guild.id, userId));
+      },
+    },
+    {
+      customIdPrefix: PREFIX.MODEL_RESET,
+      async execute(interaction) {
+        const userId = interaction.customId.slice(PREFIX.MODEL_RESET.length);
+        if (!(await assertOwner(interaction, userId))) return;
+        await saveGuildAiModel(interaction.guild.id, null);
+        await interaction.update(await render(PAGES.AIAPI, interaction.guild.id, userId));
+      },
+    },
   ],
 
   modalHandlers: [
@@ -323,15 +418,24 @@ module.exports = {
         const userId = interaction.customId.slice(PREFIX.API_MODAL.length);
         if (!(await assertOwner(interaction, userId))) return;
         await interaction.deferUpdate();
-        const apiKey = cleanText(interaction.fields.getTextInputValue("groq_api_key"));
+        const credential = cleanText(interaction.fields.getTextInputValue("provider_credential"));
+        const config = await getGuildAiConfig(interaction.guild.id);
+        const provider = config.providerDefinition;
         try {
-          const validation = await validateGroqApiKey(apiKey);
-          const encrypted = encryptCredential(apiKey, { guildId: interaction.guild.id, credentialType: "groq-api-key" });
-          const current = await getOrCreateGuildSetting(interaction.guild.id);
-          await prisma.guildSetting.update({ where: { guildId: interaction.guild.id }, data: { groqApiKeyEncrypted: encrypted, aiModel: current.aiModel && validation.modelIds.includes(current.aiModel) ? current.aiModel : null } });
-          await interaction.editReply(await renderWithNotice(PAGES.AIAPI, interaction.guild.id, userId, "✅ Groq API key validated, encrypted, and saved."));
+          const validation = await validateProviderCredential(config.provider, credential);
+          const currentOverride = config.modelSource === "guild" ? config.aiConfigRecord?.model || null : null;
+          const nextModel = currentOverride && Array.isArray(validation?.modelIds) && !validation.modelIds.includes(currentOverride)
+            ? null
+            : currentOverride;
+          await saveGuildAiCredential(interaction.guild.id, credential, {
+            provider: config.provider,
+            model: nextModel,
+          });
+          await interaction.editReply(await renderWithNotice(PAGES.AIAPI, interaction.guild.id, userId, `✅ ${provider.displayName} credential validated, encrypted, and saved.`));
         } catch (error) {
-          const message = error?.status === 401 ? "Groq rejected that API key." : "Pixy could not validate that API key.";
+          const message = error?.status === 401
+            ? `${provider.displayName} rejected that credential.`
+            : `Pixy could not validate that ${provider.displayName} credential.`;
           await interaction.editReply(await renderWithNotice(PAGES.AIAPI, interaction.guild.id, userId, `❌ ${message}`));
         }
       },
@@ -342,11 +446,14 @@ module.exports = {
         const userId = interaction.customId.slice(PREFIX.MODEL_MODAL.length);
         if (!(await assertOwner(interaction, userId))) return;
         await interaction.deferUpdate();
-        const modelId = cleanText(interaction.fields.getTextInputValue("groq_model"));
+        const modelId = cleanText(interaction.fields.getTextInputValue("provider_model"));
         try {
-          const config = await getGuildAiConfig(interaction.guild.id, { requireApiKey: true });
-          await validateGroqChatModel({ apiKey: config.groq.apiKey, modelId });
-          await prisma.guildSetting.update({ where: { guildId: interaction.guild.id }, data: { aiModel: modelId } });
+          const config = await getGuildAiConfig(interaction.guild.id, { requireCredential: true });
+          await validateProviderModel(config.provider, {
+            credential: config.credential,
+            modelId,
+          });
+          await saveGuildAiModel(interaction.guild.id, modelId);
           await interaction.editReply(await renderWithNotice(PAGES.AIAPI, interaction.guild.id, userId, `✅ Model verified and saved: \`${modelId}\`.`));
         } catch (error) {
           await interaction.editReply(await renderWithNotice(PAGES.AIAPI, interaction.guild.id, userId, `❌ ${error?.message || "Pixy could not verify that model."}`));
