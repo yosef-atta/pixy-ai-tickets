@@ -113,6 +113,42 @@ async function findNotificationChannelInCategory(guild, categoryId) {
   );
 }
 
+async function getFreshBotMember(guild) {
+  if (!guild) return null;
+
+  if (typeof guild.members?.fetchMe === "function") {
+    try {
+      return await guild.members.fetchMe({ force: true });
+    } catch {
+      // Fall back to the cached member when Discord cannot be refreshed.
+    }
+  }
+
+  return getBotMember(guild);
+}
+
+async function refreshNotificationChannel(channel) {
+  if (!channel?.guild) return channel || null;
+
+  if (typeof channel.fetch === "function") {
+    try {
+      return await channel.fetch(true);
+    } catch {
+      // Fall back to the guild channel manager below.
+    }
+  }
+
+  if (channel.id && typeof channel.guild.channels?.fetch === "function") {
+    try {
+      return await channel.guild.channels.fetch(channel.id);
+    } catch {
+      return channel;
+    }
+  }
+
+  return channel;
+}
+
 async function getNotificationChannelPermissionStatus(channel, options = {}) {
   if (!channel?.guild) {
     return {
@@ -128,14 +164,12 @@ async function getNotificationChannelPermissionStatus(channel, options = {}) {
 
   if (options.refresh === true) {
     await refreshGuildRoles(guild);
-
-    if (channel.id && typeof guild.channels?.fetch === "function") {
-      const fetched = await guild.channels.fetch(channel.id).catch(() => null);
-      if (fetched) resolvedChannel = fetched;
-    }
+    resolvedChannel = await refreshNotificationChannel(channel) || channel;
   }
 
-  const botMember = await getBotMember(guild);
+  const botMember = options.refresh === true
+    ? await getFreshBotMember(guild)
+    : await getBotMember(guild);
   const permissions = botMember
     ? resolvedChannel.permissionsFor(botMember)
     : null;
@@ -192,7 +226,7 @@ async function getOrCreateEscalationNotificationChannel({
 
   if (!channel) {
     await refreshGuildRoles(guild);
-    const botMember = await getBotMember(guild);
+    const botMember = await getFreshBotMember(guild);
 
     if (!botMember?.permissions?.has(PermissionFlagsBits.ManageChannels)) {
       return {
@@ -322,7 +356,9 @@ module.exports = {
   NOTIFICATION_REQUIRED_PERMISSIONS,
   canMentionRoleInChannel,
   canSendInChannel,
+  getFreshBotMember,
   getNotificationChannelPermissionStatus,
   getOrCreateEscalationNotificationChannel,
+  refreshNotificationChannel,
   sendEscalationNotification,
 };
