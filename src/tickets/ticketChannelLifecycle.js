@@ -1,4 +1,3 @@
-const { ChannelType } = require("discord.js");
 const { prisma } = require("../config/prisma");
 const {
   findMatchingSourceForChannel,
@@ -11,6 +10,10 @@ const {
   buildModeAwareTicketControlPayload,
   findTicketControlMessage,
 } = require("../components/ticketAiControls");
+const {
+  getTicketSurfaceSettings,
+  isSupportedTicketChannel,
+} = require("../utils/tickets/ticketSurface");
 
 function collectionValues(value) {
   if (!value) return [];
@@ -19,8 +22,41 @@ function collectionValues(value) {
   return [];
 }
 
-function isSupportedTicketChannel(channel) {
-  return channel?.type === ChannelType.GuildText;
+async function fetchGuildChannels(guild) {
+  if (typeof guild?.channels?.fetch !== "function") return false;
+  try {
+    await guild.channels.fetch();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchActiveGuildThreads(guild) {
+  if (typeof guild?.channels?.fetchActiveThreads !== "function") {
+    return { ok: false, threads: [] };
+  }
+
+  try {
+    const fetched = await guild.channels.fetchActiveThreads();
+    return {
+      ok: true,
+      threads: collectionValues(fetched?.threads),
+    };
+  } catch {
+    return { ok: false, threads: [] };
+  }
+}
+
+async function resolveGuildTicketSurface(guild, channelId) {
+  const cached = guild?.channels?.cache?.get?.(channelId);
+  if (cached) return cached;
+  if (typeof guild?.channels?.fetch !== "function") return null;
+  try {
+    return await guild.channels.fetch(channelId);
+  } catch {
+    return null;
+  }
 }
 
 async function resolveTicketChannelEligibility(channel, options = {}) {
@@ -99,10 +135,12 @@ async function ensureTicketControlMessage(channel, ticket, options = {}) {
       ? Promise.resolve(options.settings)
       : client.guildSetting.findUnique({ where: { guildId } }),
   ]);
+  const surfaceSettings = getTicketSurfaceSettings(channel, settings);
 
   const payload = buildModeAwareTicketControlPayload(ticket.aiEnabled !== false, {
     plan: entitlement.plan,
-    settings,
+    settings: surfaceSettings,
+    channel,
     escalated: ticket.escalated === true,
   });
 
@@ -251,7 +289,9 @@ async function cleanupDeletedTicketChannel(channel, options = {}) {
   const client = options.client || prisma;
   const guildId = channel?.guild?.id;
   const channelId = channel?.id;
-  if (!guildId || !channelId) return { ticketDeleted: 0, blacklistDeleted: 0 };
+  if (!guildId || !channelId) {
+    return { ticketDeleted: 0, ignoredDeleted: 0, blacklistDeleted: 0 };
+  }
 
   const operations = [
     client.ticketChannel.deleteMany({ where: { guildId, channelId } }),
@@ -260,10 +300,13 @@ async function cleanupDeletedTicketChannel(channel, options = {}) {
   const results = typeof client.$transaction === "function"
     ? await client.$transaction(operations)
     : await Promise.all(operations);
+  const ignoredDeleted = Number(results[1]?.count || 0);
 
   return {
     ticketDeleted: Number(results[0]?.count || 0),
-    blacklistDeleted: Number(results[1]?.count || 0),
+    ignoredDeleted,
+    // Compatibility alias for older tests/callers.
+    blacklistDeleted: ignoredDeleted,
   };
 }
 
@@ -273,7 +316,10 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
     return { guildId: null, eligible: 0, created: 0, removed: 0, failed: 0, skipped: true };
   }
 
-  await guild.channels?.fetch?.().catch(() => null);
+  const [channelsFetched, activeThreadResult] = await Promise.all([
+    fetchGuildChannels(guild),
+    fetchActiveGuildThreads(guild),
+  ]);
 
   const guildId = guild.id;
   const [config, sources, ignoredEntries, existingTickets] = await Promise.all([
@@ -287,31 +333,68 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
   ]);
 
   const ignoredChannelIds = new Set(ignoredEntries.map((entry) => entry.channelId));
-  const channels = collectionValues(guild.channels?.cache);
-  const eligibleChannels = new Map();
+  const visibleSurfaces = new Map();
+  for (const channel of collectionValues(guild.channels?.cache)) {
+    if (isSupportedTicketChannel(channel)) visibleSurfaces.set(channel.id, channel);
+  }
+  for (const thread of activeThreadResult.threads) {
+    if (isSupportedTicketChannel(thread)) visibleSurfaces.set(thread.id, thread);
+  }
 
+  const eligibleChannels = new Map();
   if (config?.enabled && sources.length) {
-    for (const channel of channels) {
-      if (!isSupportedTicketChannel(channel)) continue;
+    for (const channel of visibleSurfaces.values()) {
       const source = findMatchingSourceForChannel(channel, sources);
       if (!source || ignoredChannelIds.has(channel.id)) continue;
-      eligibleChannels.set(channel.id, { channel, source });
+      eligibleChannels.set(channel.id, { channel, source, discovered: true });
     }
   }
 
-  const eligibleIds = [...eligibleChannels.keys()];
-  const removeWhere = eligibleIds.length
-    ? { guildId, channelId: { notIn: eligibleIds } }
-    : { guildId };
-  const removedResult = await client.ticketChannel.deleteMany({ where: removeWhere });
+  const removeIds = [];
+  if (!config?.enabled || !sources.length) {
+    removeIds.push(...existingTickets.map((ticket) => ticket.channelId));
+  } else {
+    for (const ticket of existingTickets) {
+      if (eligibleChannels.has(ticket.channelId)) continue;
+
+      const channel = visibleSurfaces.get(ticket.channelId) ||
+        await resolveGuildTicketSurface(guild, ticket.channelId);
+      if (!channel || !isSupportedTicketChannel(channel)) {
+        removeIds.push(ticket.channelId);
+        continue;
+      }
+
+      const source = findMatchingSourceForChannel(channel, sources);
+      if (!source || ignoredChannelIds.has(channel.id)) {
+        removeIds.push(ticket.channelId);
+        continue;
+      }
+
+      // Archived threads are not returned by fetchActiveThreads(). Resolve
+      // existing ticket IDs individually so an archived-but-valid thread is not
+      // mistaken for a deleted ticket during startup reconciliation.
+      eligibleChannels.set(channel.id, { channel, source, discovered: false });
+    }
+  }
+
+  let removed = 0;
+  if (removeIds.length) {
+    const removedResult = await client.ticketChannel.deleteMany({
+      where: {
+        guildId,
+        channelId: { in: [...new Set(removeIds)] },
+      },
+    });
+    removed = Number(removedResult?.count || 0);
+  }
 
   const existingIds = new Set(
     existingTickets
-      .filter((ticket) => eligibleChannels.has(ticket.channelId))
+      .filter((ticket) => !removeIds.includes(ticket.channelId))
       .map((ticket) => ticket.channelId)
   );
   const missingChannels = [...eligibleChannels.values()]
-    .filter(({ channel }) => !existingIds.has(channel.id));
+    .filter(({ channel, discovered }) => discovered && !existingIds.has(channel.id));
 
   let created = 0;
   let failed = 0;
@@ -352,9 +435,11 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
     guildId,
     eligible: eligibleChannels.size,
     created,
-    removed: Number(removedResult?.count || 0),
+    removed,
     failed,
     skipped: false,
+    channelsFetched,
+    activeThreadsFetched: activeThreadResult.ok,
   };
 }
 
@@ -363,9 +448,12 @@ module.exports = {
   collectionValues,
   createTicketRecord,
   ensureTicketControlMessage,
+  fetchActiveGuildThreads,
+  fetchGuildChannels,
   isSupportedTicketChannel,
   reconcileGuildTicketChannels,
   reconcileTicketChannel,
+  resolveGuildTicketSurface,
   resolveTicketChannelEligibility,
   trackTicketChannel,
   untrackTicketChannel,
