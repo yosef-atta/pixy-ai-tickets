@@ -74,13 +74,34 @@ function createTicketSourceClient() {
   return client;
 }
 
-test("multi-category onboarding stores all ticket sources without starting billing", async () => {
+function addGuildConfigMock(client, initialEnabled = false) {
+  let config = {
+    guildId: GUILD_ID,
+    enabled: initialEnabled,
+    maxLearnedItems: 50,
+    maxAdminRoutes: 10,
+  };
+  client.guildConfig = {
+    async findUnique() {
+      return { ...config };
+    },
+    async update({ data }) {
+      config = { ...config, ...data };
+      return { ...config };
+    },
+  };
+  client.getGuildConfig = () => ({ ...config });
+  return client;
+}
+
+test("multi-category onboarding stores all ticket sources without starting billing or activating Pixy", async () => {
   const client = createTicketSourceClient();
 
   await setTicketCategories(GUILD_ID, [CATEGORY_A, CATEGORY_B], { client });
 
   const snapshot = client.snapshot();
   assert.equal(snapshot.config.ticketCategoryId, CATEGORY_A);
+  assert.equal(snapshot.config.enabled, false);
   assert.equal(snapshot.sources.length, 2);
   assert.deepEqual(
     snapshot.sources.map((source) => source.sourceId).sort(),
@@ -89,17 +110,17 @@ test("multi-category onboarding stores all ticket sources without starting billi
   assert.equal("guildBilling" in client, false);
 });
 
-test("onboarding completion initializes billing only at the final step", async () => {
+test("onboarding completion initializes billing and activates Pixy only at the final step", async () => {
   const calls = [];
   const completedAt = new Date("2026-08-19T14:00:00.000Z");
-  const client = {
+  const client = addGuildConfigMock({
     guildSetupState: {
       async upsert(args) {
         calls.push(["setup", args]);
         return { id: "setup-1", ...args.create };
       },
     },
-  };
+  });
 
   const result = await completeOnboarding(GUILD_ID, {
     client,
@@ -115,13 +136,14 @@ test("onboarding completion initializes billing only at the final step", async (
   assert.equal(calls[0][1], GUILD_ID);
   assert.equal(calls[0][2], "admin-user");
   assert.equal(calls[1][0], "setup");
+  assert.equal(client.getGuildConfig().enabled, true);
   assert.equal(result.state.lastStep, SETUP_STEPS.COMPLETE);
   assert.equal(result.state.completedAt.getTime(), completedAt.getTime());
 });
 
 test("skipping optional human support disables escalation and still completes setup", async () => {
   let setting = null;
-  const client = {
+  const client = addGuildConfigMock({
     guildSetting: {
       async upsert({ create, update }) {
         setting = setting ? { ...setting, ...update } : { ...create };
@@ -133,7 +155,7 @@ test("skipping optional human support disables escalation and still completes se
         return { id: "setup-1", ...args.create };
       },
     },
-  };
+  });
 
   const result = await skipHumanSupportAndComplete(GUILD_ID, {
     client,
@@ -143,6 +165,7 @@ test("skipping optional human support disables escalation and still completes se
   });
 
   assert.equal(setting.escalationEnabled, false);
+  assert.equal(client.getGuildConfig().enabled, true);
   assert.equal(result.state.lastStep, SETUP_STEPS.COMPLETE);
 });
 
