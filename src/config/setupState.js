@@ -57,30 +57,37 @@ async function inferSetupProgress(guildId, options = {}) {
   };
 }
 
-async function getOrCreateSetupState(guildId, options = {}) {
+async function reconcileSetupState(guildId, options = {}) {
   const client = options.client || prisma;
   const normalizedGuildId = normalizeGuildId(guildId);
+  const progress = await inferSetupProgress(normalizedGuildId, { client });
   const existing = await client.guildSetupState.findUnique({
     where: { guildId: normalizedGuildId },
   });
-  if (existing) return existing;
 
-  const progress = await inferSetupProgress(normalizedGuildId, { client });
+  if (existing?.completedAt && existing.setupVersion === CURRENT_SETUP_VERSION) {
+    return existing;
+  }
+
+  const now = options.now instanceof Date ? options.now : new Date();
   const data = {
-    guildId: normalizedGuildId,
     setupVersion: CURRENT_SETUP_VERSION,
     lastStep: progress.lastStep,
-    completedAt: progress.completed ? new Date() : null,
+    completedAt: progress.completed ? existing?.completedAt || now : null,
   };
 
-  try {
-    return await client.guildSetupState.create({ data });
-  } catch (error) {
-    if (error?.code !== "P2002") throw error;
-    return client.guildSetupState.findUniqueOrThrow({
-      where: { guildId: normalizedGuildId },
-    });
-  }
+  return client.guildSetupState.upsert({
+    where: { guildId: normalizedGuildId },
+    create: {
+      guildId: normalizedGuildId,
+      ...data,
+    },
+    update: data,
+  });
+}
+
+async function getOrCreateSetupState(guildId, options = {}) {
+  return reconcileSetupState(guildId, options);
 }
 
 async function markSetupStep(guildId, lastStep, options = {}) {
@@ -91,18 +98,19 @@ async function markSetupStep(guildId, lastStep, options = {}) {
     throw new TypeError(`Unsupported setup step: ${step || "empty"}`);
   }
 
+  const now = options.now instanceof Date ? options.now : new Date();
   return client.guildSetupState.upsert({
     where: { guildId: normalizedGuildId },
     create: {
       guildId: normalizedGuildId,
       setupVersion: CURRENT_SETUP_VERSION,
       lastStep: step,
-      completedAt: step === SETUP_STEPS.COMPLETE ? new Date() : null,
+      completedAt: step === SETUP_STEPS.COMPLETE ? now : null,
     },
     update: {
       setupVersion: CURRENT_SETUP_VERSION,
       lastStep: step,
-      completedAt: step === SETUP_STEPS.COMPLETE ? new Date() : null,
+      completedAt: step === SETUP_STEPS.COMPLETE ? now : null,
     },
   });
 }
@@ -117,4 +125,5 @@ module.exports = {
   markSetupComplete,
   markSetupStep,
   normalizeGuildId,
+  reconcileSetupState,
 };
