@@ -1,5 +1,6 @@
 const { prisma } = require("../config/prisma");
 const { getOrCreateGuildSetting } = require("../config/ai");
+const { ensureGuildConfig } = require("../config/guildConfigFoundation");
 const {
   TICKET_OPERATING_MODES,
   getTicketOperatingModePreferences,
@@ -87,6 +88,10 @@ async function saveBehaviorPatch(guild, patch, options = {}) {
         prospective,
       };
     }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(normalizedPatch, "aiReplyEnabled")) {
+    await ensureGuildConfig(guild.id, { client });
   }
 
   await withTransaction(client, async (tx) => {
