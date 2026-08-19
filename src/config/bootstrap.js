@@ -76,7 +76,16 @@ function applyProductionSlashCommandName(command) {
 }
 
 function attachSource(handler, commandName) {
-  return { ...handler, sourceCommand: commandName };
+  const attached = { ...handler, sourceCommand: commandName };
+
+  // Slash handlers are registered before standalone component modules load.
+  // Delegate execution to the original handler object so a later component can
+  // safely refine that handler without leaving the client with a stale copy.
+  if (typeof handler?.execute === "function") {
+    attached.execute = (...args) => handler.execute.apply(handler, args);
+  }
+
+  return attached;
 }
 
 function registerInteractionHandlers(client, command) {
@@ -283,6 +292,7 @@ module.exports = {
   PUBLIC_SLASH_COMMANDS,
   SLASH_COMMAND_PREFIX,
   applyProductionSlashCommandName,
+  attachSource,
   bootstrap,
   commandToJSON,
   getBaseSlashCommandName,
