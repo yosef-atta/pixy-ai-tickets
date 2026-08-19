@@ -24,14 +24,14 @@ test("public and operator documentation describes implemented billing behavior",
     assert.match(readme, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const expected of [
-    "Billing audit events",
-    "Trial abuse prevention",
-    "PayPal",
-    "Vodafone Cash",
-    "does not collect payment",
-    "August 1, 2026",
+    /Billing audit events/i,
+    /Trial-abuse prevention/i,
+    /PayPal/i,
+    /Vodafone Cash/i,
+    /does not collect payment/i,
+    /Last updated: August 19, 2026/i,
   ]) {
-    assert.match(privacy, new RegExp(expected, "i"));
+    assert.match(privacy, expected);
   }
 });
 
