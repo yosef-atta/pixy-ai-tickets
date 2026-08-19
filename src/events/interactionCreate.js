@@ -4,9 +4,6 @@ const {
   DISABLED_MESSAGES,
   getTicketActionAvailability,
 } = require("../features/ticketActionAvailability");
-const {
-  stopUnavailableLearnWrite,
-} = require("../features/learnSubscription");
 
 const DEFAULT_ERROR_MESSAGE = "An error occurred while executing this interaction.";
 const SETTINGS_COMPONENT_PREFIX = "settings_";
@@ -50,7 +47,9 @@ async function safeReply(interaction, payload) {
     return;
   }
 
-  const finalPayload = typeof payload === "string" ? { content: payload, flags: 64 } : { flags: 64, ...payload };
+  const finalPayload = typeof payload === "string"
+    ? { content: payload, flags: 64 }
+    : { flags: 64, ...payload };
 
   try {
     if (interaction.replied || interaction.deferred) await interaction.followUp(finalPayload);
@@ -106,7 +105,8 @@ async function refreshTicketControlsAfterSettingsChange(interaction, options = {
     return { ok: true, skipped: true };
   }
 
-  const refreshControls = options.refreshControls || require("../billing/ticketControlRefresh").refreshOpenTicketControlsForGuild;
+  const refreshControls = options.refreshControls ||
+    require("../billing/ticketControlRefresh").refreshOpenTicketControlsForGuild;
   const result = await refreshControls(interaction.guild.id, {
     guild: interaction.guild,
     discordClient: interaction.client,
@@ -143,8 +143,7 @@ async function refreshExpiredTicketControls(interaction, aiEnabled) {
 
 async function stopUnavailableTicketAction(interaction, options = {}) {
   try {
-    const getAvailability =
-      options.getAvailability || getTicketActionAvailability;
+    const getAvailability = options.getAvailability || getTicketActionAvailability;
     const availability = await getAvailability(interaction, options);
     if (!availability || availability.available) return false;
 
@@ -159,8 +158,8 @@ async function stopUnavailableTicketAction(interaction, options = {}) {
     await safeReply(interaction, availability.message);
 
     if (availability.refreshControls) {
-      const refreshControlMessage =
-        options.refreshControlMessage || refreshExpiredTicketControls;
+      const refreshControlMessage = options.refreshControlMessage ||
+        refreshExpiredTicketControls;
       await refreshControlMessage(
         interaction,
         availability.aiEnabled
@@ -176,37 +175,23 @@ async function stopUnavailableTicketAction(interaction, options = {}) {
   }
 }
 
-async function stopUnavailableLearnInteraction(interaction, options = {}) {
-  try {
-    const stopLearnWrite =
-      options.stopLearnWrite || stopUnavailableLearnWrite;
-
-    return await stopLearnWrite(interaction, {
-      ...options,
-      reply: safeReply,
-    });
-  } catch (error) {
-    console.error("Learn subscription preflight failed:", error);
-    await safeReply(
-      interaction,
-      "I could not verify the server's subscription right now. Please try again."
-    );
-    return true;
-  }
-}
-
 function isDisabled(entry) {
   return entry?.disabled === true || entry?.maintenance === true;
 }
 
 function getDisabledMessage(entry) {
-  return entry?.disabledMessage || entry?.maintenanceMessage || "This interaction is currently disabled or under maintenance.";
+  return entry?.disabledMessage ||
+    entry?.maintenanceMessage ||
+    "This interaction is currently disabled or under maintenance.";
 }
 
 async function checkGuildOnly(interaction, entry) {
   if (!entry?.guildOnly) return true;
   if (interaction.guild) return true;
-  await safeReply(interaction, entry.guildOnlyMessage || "This interaction can only be used inside a server.");
+  await safeReply(
+    interaction,
+    entry.guildOnlyMessage || "This interaction can only be used inside a server."
+  );
   return false;
 }
 
@@ -220,7 +205,10 @@ async function checkUserPermissions(interaction, entry) {
   }
 
   if (!interaction.memberPermissions.has(permissions)) {
-    await safeReply(interaction, entry?.userPermissionsMessage || "You do not have permission to use this interaction.");
+    await safeReply(
+      interaction,
+      entry?.userPermissionsMessage || "You do not have permission to use this interaction."
+    );
     return false;
   }
 
@@ -237,9 +225,14 @@ async function checkBotPermissions(interaction, entry) {
     return false;
   }
 
-  const botPermissions = interaction.channel ? botMember.permissionsIn(interaction.channel) : botMember.permissions;
+  const botPermissions = interaction.channel
+    ? botMember.permissionsIn(interaction.channel)
+    : botMember.permissions;
   if (!botPermissions.has(permissions)) {
-    await safeReply(interaction, entry?.botPermissionsMessage || "I do not have the required permissions to do that.");
+    await safeReply(
+      interaction,
+      entry?.botPermissionsMessage || "I do not have the required permissions to do that."
+    );
     return false;
   }
 
@@ -257,7 +250,10 @@ async function checkCooldown(interaction, entry, fallbackName) {
 
   if (expiresAt && expiresAt > now) {
     const remaining = ((expiresAt - now) / 1000).toFixed(1);
-    await safeReply(interaction, entry?.cooldownMessage || `Please wait ${remaining}s before using this again.`);
+    await safeReply(
+      interaction,
+      entry?.cooldownMessage || `Please wait ${remaining}s before using this again.`
+    );
     return false;
   }
 
@@ -294,11 +290,15 @@ async function runInteraction(interaction, label, entry, callback) {
 
 function matchesCustomId(handler, interaction) {
   if (!handler || !interaction.customId) return false;
-  if (typeof handler.matches === "function") return handler.matches(interaction.customId, interaction);
+  if (typeof handler.matches === "function") {
+    return handler.matches(interaction.customId, interaction);
+  }
   if (handler.customId instanceof RegExp) return handler.customId.test(interaction.customId);
   if (Array.isArray(handler.customId)) return handler.customId.includes(interaction.customId);
   if (typeof handler.customId === "string") return handler.customId === interaction.customId;
-  if (typeof handler.customIdPrefix === "string") return interaction.customId.startsWith(handler.customIdPrefix);
+  if (typeof handler.customIdPrefix === "string") {
+    return interaction.customId.startsWith(handler.customIdPrefix);
+  }
   return false;
 }
 
@@ -313,43 +313,59 @@ function getSelectMenuType(interaction) {
 
 function normalizeSelectType(type) {
   const value = String(type || "").toLowerCase();
-  if (!value || ["any", "select", "selectmenu", "select-menu", "anyselect", "anyselectmenu"].includes(value)) return "any";
+  if (!value || ["any", "select", "selectmenu", "select-menu", "anyselect", "anyselectmenu"].includes(value)) {
+    return "any";
+  }
   if (["string", "stringselect", "stringselectmenu"].includes(value)) return "string";
   if (["user", "userselect", "userselectmenu"].includes(value)) return "user";
   if (["role", "roleselect", "roleselectmenu"].includes(value)) return "role";
   if (["channel", "channelselect", "channelselectmenu"].includes(value)) return "channel";
-  if (["mentionable", "mentionableselect", "mentionableselectmenu"].includes(value)) return "mentionable";
+  if (["mentionable", "mentionableselect", "mentionableselectmenu"].includes(value)) {
+    return "mentionable";
+  }
   return value;
 }
 
 function isAnySelectMenu(interaction) {
-  return interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu() || interaction.isChannelSelectMenu() || interaction.isMentionableSelectMenu();
+  return interaction.isStringSelectMenu() ||
+    interaction.isUserSelectMenu() ||
+    interaction.isRoleSelectMenu() ||
+    interaction.isChannelSelectMenu() ||
+    interaction.isMentionableSelectMenu();
 }
 
 function findButtonHandler(interaction) {
-  return interaction.client.buttonHandlers?.find((handler) => matchesCustomId(handler, interaction));
+  return interaction.client.buttonHandlers?.find((handler) =>
+    matchesCustomId(handler, interaction)
+  );
 }
 
 function findSelectMenuHandler(interaction) {
   return interaction.client.selectMenuHandlers?.find((handler) => {
     const handlerType = normalizeSelectType(handler?.type || handler?.selectType);
-    return (handlerType === "any" || handlerType === getSelectMenuType(interaction)) && matchesCustomId(handler, interaction);
+    return (handlerType === "any" || handlerType === getSelectMenuType(interaction)) &&
+      matchesCustomId(handler, interaction);
   });
 }
 
 function findModalHandler(interaction) {
-  return interaction.client.modalHandlers?.find((handler) => matchesCustomId(handler, interaction));
+  return interaction.client.modalHandlers?.find((handler) =>
+    matchesCustomId(handler, interaction)
+  );
 }
 
 function matchesAutocompleteHandler(handler, interaction) {
   if (!handler) return false;
   if (typeof handler.matches === "function") return handler.matches(interaction);
-  return toArray(handler.commandName || handler.name || handler.sourceCommand).includes(interaction.commandName);
+  return toArray(handler.commandName || handler.name || handler.sourceCommand)
+    .includes(interaction.commandName);
 }
 
 async function handleAutocomplete(interaction) {
   const command = interaction.client.commands.get(interaction.commandName);
-  const handler = interaction.client.autocompleteHandlers?.find((entry) => matchesAutocompleteHandler(entry, interaction)) || command;
+  const handler = interaction.client.autocompleteHandlers?.find((entry) =>
+    matchesAutocompleteHandler(entry, interaction)
+  ) || command;
 
   if (!handler || typeof handler.execute !== "function") {
     try {
@@ -386,10 +402,7 @@ const interactionCreateEvent = {
         interaction,
         `Command ${interaction.commandName}`,
         command,
-        async () => {
-          if (await stopUnavailableLearnInteraction(interaction)) return;
-          await command.execute(interaction);
-        }
+        () => command.execute(interaction)
       );
       return;
     }
@@ -398,7 +411,14 @@ const interactionCreateEvent = {
       if (await stopUnavailableSettingsInteraction(interaction)) return;
       if (await stopUnavailableTicketAction(interaction)) return;
       const handler = findButtonHandler(interaction);
-      if (handler) await runInteraction(interaction, `Button ${interaction.customId}`, handler, () => handler.execute(interaction));
+      if (handler) {
+        await runInteraction(
+          interaction,
+          `Button ${interaction.customId}`,
+          handler,
+          () => handler.execute(interaction)
+        );
+      }
       return;
     }
 
@@ -429,7 +449,6 @@ const interactionCreateEvent = {
         `Modal ${interaction.customId}`,
         handler,
         async () => {
-          if (await stopUnavailableLearnInteraction(interaction)) return;
           if (await stopUnavailableTicketAction(interaction)) return;
           await handler.execute(interaction);
         }
@@ -445,7 +464,6 @@ module.exports = Object.assign(interactionCreateEvent, {
   refreshTicketControlsAfterSettingsChange,
   safeReply,
   shouldRefreshTicketControlsAfterSettingsChange,
-  stopUnavailableLearnInteraction,
   stopUnavailableSettingsInteraction,
   stopUnavailableTicketAction,
 });
