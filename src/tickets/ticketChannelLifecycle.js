@@ -270,7 +270,7 @@ async function cleanupDeletedTicketChannel(channel, options = {}) {
 async function reconcileGuildTicketChannels(guild, options = {}) {
   const client = options.client || prisma;
   if (!guild?.id) {
-    return { guildId: null, eligible: 0, created: 0, removed: 0, skipped: true };
+    return { guildId: null, eligible: 0, created: 0, removed: 0, failed: 0, skipped: true };
   }
 
   await guild.channels?.fetch?.().catch(() => null);
@@ -314,6 +314,7 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
     .filter(({ channel }) => !existingIds.has(channel.id));
 
   let created = 0;
+  let failed = 0;
   let entitlement = null;
   let settings = null;
   if (missingChannels.length && options.ensureControls !== false) {
@@ -324,21 +325,27 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
   }
 
   for (const { channel, source } of missingChannels) {
-    const result = await trackTicketChannel(channel, {
-      client,
-      existingTicket: null,
-      entitlement,
-      settings,
-      ensureControls: options.ensureControls === false ? false : true,
-      eligibility: {
-        eligible: true,
-        code: "eligible",
-        config,
-        sources,
-        source,
-      },
-    });
-    if (result.created) created += 1;
+    try {
+      const result = await trackTicketChannel(channel, {
+        client,
+        existingTicket: null,
+        entitlement,
+        settings,
+        ensureControls: options.ensureControls === false ? false : true,
+        eligibility: {
+          eligible: true,
+          code: "eligible",
+          config,
+          sources,
+          source,
+        },
+      });
+      if (result.created) created += 1;
+    } catch (error) {
+      failed += 1;
+      const logger = options.logger || console;
+      logger.error?.(`Failed to reconcile Pixy ticket ${channel.id} in guild ${guildId}:`, error);
+    }
   }
 
   return {
@@ -346,6 +353,7 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
     eligible: eligibleChannels.size,
     created,
     removed: Number(removedResult?.count || 0),
+    failed,
     skipped: false,
   };
 }
