@@ -17,7 +17,7 @@ function normalizeMistralModelId(value) {
 }
 
 function modelSupportsChat(model) {
-  if (!model?.id) return false;
+  if (!model?.id || model.archived === true) return false;
   if (model.capabilities && typeof model.capabilities.completion_chat === "boolean") {
     return model.capabilities.completion_chat;
   }
@@ -42,7 +42,9 @@ async function listMistralModels(apiKey, options = {}) {
     headers: { Authorization: `Bearer ${key}` },
     fetchImpl: options.fetchImpl,
   });
-  return Array.isArray(payload?.data) ? payload.data : [];
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload)) return payload;
+  return [];
 }
 
 async function validateMistralApiKey(apiKey, options = {}) {
@@ -78,7 +80,7 @@ async function validateMistralChatModel({ apiKey, modelId, fetchImpl } = {}) {
   if (!modelSupportsChat(model)) {
     throw createProviderError(
       "not_chat_compatible",
-      "That Mistral model is not a normal chat-completion model.",
+      "That Mistral model is not an active chat-completion model.",
       { provider: MISTRAL_PROVIDER_ID, modelId: id }
     );
   }
