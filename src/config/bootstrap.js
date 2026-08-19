@@ -16,6 +16,8 @@ const PUBLIC_SLASH_COMMANDS = Object.freeze([
   "reset",
 ]);
 const PUBLIC_SLASH_COMMAND_SET = new Set(PUBLIC_SLASH_COMMANDS);
+const GUILD_INSTALL_TYPE = 0;
+const GUILD_INTERACTION_CONTEXT = 0;
 
 function getAllJsFiles(dirPath, arrayOfFiles = []) {
   const files = fs.readdirSync(dirPath).sort((a, b) => a.localeCompare(b));
@@ -127,15 +129,17 @@ function registerInteractionHandlers(client, command) {
   }
 }
 
-function commandToJSON(command) {
+function commandToJSON(command, options = {}) {
   const json = typeof command.data?.toJSON === "function"
     ? command.data.toJSON()
     : { ...(command.data || {}) };
+  const globalScope = options.globalScope !== false;
 
-  if (command.guildOnly === true) {
+  if (command.guildOnly === true && globalScope) {
     return {
       ...json,
-      dm_permission: false,
+      integration_types: [GUILD_INSTALL_TYPE],
+      contexts: [GUILD_INTERACTION_CONTEXT],
     };
   }
 
@@ -144,7 +148,8 @@ function commandToJSON(command) {
 
 async function syncCommands({ token, clientId, guildId }, commands, prefixCount) {
   const rest = new REST({ version: "10" }).setToken(token);
-  const body = commands.map(commandToJSON);
+  const globalScope = !guildId;
+  const body = commands.map((command) => commandToJSON(command, { globalScope }));
 
   if (guildId) {
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
@@ -273,6 +278,8 @@ async function bootstrap() {
 }
 
 module.exports = {
+  GUILD_INSTALL_TYPE,
+  GUILD_INTERACTION_CONTEXT,
   PUBLIC_SLASH_COMMANDS,
   SLASH_COMMAND_PREFIX,
   applyProductionSlashCommandName,
