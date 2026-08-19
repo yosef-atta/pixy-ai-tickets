@@ -1,4 +1,4 @@
-const { PermissionFlagsBits } = require("discord.js");
+const { ChannelType, PermissionFlagsBits } = require("discord.js");
 const { prisma } = require("../config/prisma");
 const {
   SUBSCRIPTION_REJECTION_MESSAGES,
@@ -51,9 +51,26 @@ function getTicketControlAction(interaction) {
   return null;
 }
 
-async function hasConfiguredSupportRoute(guild, options = {}) {
+async function getHumanSupportAvailability(guild, options = {}) {
   const client = options.client || prisma;
-  await guild.roles.fetch().catch(() => null);
+  await Promise.all([
+    guild.roles.fetch().catch(() => null),
+    guild.channels.fetch().catch(() => null),
+  ]);
+
+  const config = await client.guildConfig.findUnique({
+    where: { guildId: guild.id },
+    select: { escalationCategoryId: true },
+  });
+
+  if (!config?.escalationCategoryId) {
+    return { available: false, code: "missing_escalation_category" };
+  }
+
+  const category = guild.channels.cache.get(config.escalationCategoryId);
+  if (!category || category.type !== ChannelType.GuildCategory) {
+    return { available: false, code: "invalid_escalation_category" };
+  }
 
   const routes = await client.adminRoute.findMany({
     where: { guildId: guild.id, enabled: true },
@@ -61,10 +78,22 @@ async function hasConfiguredSupportRoute(guild, options = {}) {
     take: 25,
   });
 
-  return routes.some(({ roleId }) => roleId !== guild.id && guild.roles.cache.has(roleId));
+  const hasValidRoute = routes.some(
+    ({ roleId }) => roleId !== guild.id && guild.roles.cache.has(roleId)
+  );
+  if (!hasValidRoute) {
+    return { available: false, code: "no_support_routes" };
+  }
+
+  return { available: true, code: null };
 }
 
-function getNoRoutesMessage(interaction) {
+async function hasConfiguredSupportRoute(guild, options = {}) {
+  const result = await getHumanSupportAvailability(guild, options);
+  return result.available;
+}
+
+function getHumanSupportUnavailableMessage(interaction, code) {
   const userMessage =
     "Human escalation isn't available right now. Please continue describing your issue in this ticket so the support team can still review the conversation here.";
 
@@ -72,7 +101,15 @@ function getNoRoutesMessage(interaction) {
     return userMessage;
   }
 
-  return `${userMessage}\n\nAdministrator note: add at least one support route with \`/pixy-admins action:add\` to enable this option.`;
+  if (code === "missing_escalation_category" || code === "invalid_escalation_category") {
+    return `${userMessage}\n\nAdministrator note: open \`/pixy-setup\` and repair the Human Support escalation category.`;
+  }
+
+  return `${userMessage}\n\nAdministrator note: open \`/pixy-setup\` and add at least one valid Human Support role route.`;
+}
+
+function getNoRoutesMessage(interaction) {
+  return getHumanSupportUnavailableMessage(interaction, "no_support_routes");
 }
 
 async function getTicketActionAvailability(interaction, options = {}) {
@@ -108,18 +145,20 @@ async function getTicketActionAvailability(interaction, options = {}) {
     };
   }
 
-  if (
-    action === TICKET_ACTIONS.ESCALATE_TICKET &&
-    !(await hasConfiguredSupportRoute(interaction.guild, { client }))
-  ) {
-    return {
-      available: false,
-      action,
-      code: "no_support_routes",
-      message: getNoRoutesMessage(interaction),
-      refreshControls: false,
-      aiEnabled: ticket.aiEnabled !== false,
-    };
+  if (action === TICKET_ACTIONS.ESCALATE_TICKET) {
+    const humanSupport = await getHumanSupportAvailability(interaction.guild, {
+      client,
+    });
+    if (!humanSupport.available) {
+      return {
+        available: false,
+        action,
+        code: humanSupport.code,
+        message: getHumanSupportUnavailableMessage(interaction, humanSupport.code),
+        refreshControls: false,
+        aiEnabled: ticket.aiEnabled !== false,
+      };
+    }
   }
 
   return {
@@ -135,6 +174,9 @@ module.exports = {
   ACTION_PREFIXES,
   ACTION_SELECT_ID,
   DISABLED_MESSAGES,
+  getHumanSupportAvailability,
+  getHumanSupportUnavailableMessage,
+  getNoRoutesMessage,
   getTicketActionAvailability,
   getTicketControlAction,
   hasConfiguredSupportRoute,
