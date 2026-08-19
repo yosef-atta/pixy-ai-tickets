@@ -9,6 +9,7 @@ const GOOGLE_PROVIDER_ID = "google";
 const GOOGLE_CREDENTIAL_TYPE = "google-gemini-api-key";
 const DEFAULT_GOOGLE_MODEL = "gemini-3.6-flash";
 const GOOGLE_API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
+const NON_TEXT_MODEL_PATTERN = /(?:embedding|embed-|image|imagen|tts|live|robotics|veo|aqa)/i;
 
 function normalizeGoogleModelId(value) {
   return String(value || "")
@@ -21,6 +22,15 @@ function modelSupportsGenerateContent(model) {
     ? model.supportedGenerationMethods
     : [];
   return methods.includes("generateContent");
+}
+
+function modelSupportsTextGeneration(model) {
+  const id = normalizeGoogleModelId(model?.name || model?.baseModelId);
+  return Boolean(
+    id &&
+    modelSupportsGenerateContent(model) &&
+    !NON_TEXT_MODEL_PATTERN.test(id)
+  );
 }
 
 function createMissingCredentialError() {
@@ -61,7 +71,7 @@ async function validateGoogleApiKey(apiKey, options = {}) {
   return {
     valid: true,
     modelIds: models
-      .filter(modelSupportsGenerateContent)
+      .filter(modelSupportsTextGeneration)
       .map((model) => normalizeGoogleModelId(model?.name))
       .filter(Boolean),
   };
@@ -86,10 +96,10 @@ async function validateGoogleChatModel({ apiKey, modelId, fetchImpl } = {}) {
       { provider: GOOGLE_PROVIDER_ID, modelId: id }
     );
   }
-  if (!modelSupportsGenerateContent(model)) {
+  if (!modelSupportsTextGeneration(model)) {
     throw createProviderError(
       "not_chat_compatible",
-      "That Google model does not support generateContent text generation.",
+      "That Google model is not suitable for Pixy's normal text ticket replies.",
       { provider: GOOGLE_PROVIDER_ID, modelId: id }
     );
   }
@@ -201,7 +211,7 @@ async function generateGoogleReply({
 async function listGoogleModelOptions(credential, options = {}) {
   const models = await listGoogleModels(credential, options);
   return models
-    .filter(modelSupportsGenerateContent)
+    .filter(modelSupportsTextGeneration)
     .map((model) => ({
       id: normalizeGoogleModelId(model?.name),
       label: String(model?.displayName || normalizeGoogleModelId(model?.name)).trim(),
@@ -241,6 +251,7 @@ module.exports = {
   listGoogleModelOptions,
   listGoogleModels,
   modelSupportsGenerateContent,
+  modelSupportsTextGeneration,
   normalizeGoogleModelId,
   normalizeGoogleUsage,
   validateGoogleApiKey,
