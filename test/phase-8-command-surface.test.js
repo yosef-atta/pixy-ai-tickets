@@ -4,6 +4,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  GUILD_INSTALL_TYPE,
+  GUILD_INTERACTION_CONTEXT,
   PUBLIC_SLASH_COMMANDS,
   SLASH_COMMAND_PREFIX,
   applyProductionSlashCommandName,
@@ -83,18 +85,33 @@ test("production command prefixing is deterministic and idempotent", () => {
   assert.equal(applyProductionSlashCommandName(command), "pixy-setup");
 });
 
-test("guild-only slash commands are registered with DM availability disabled", () => {
+test("global guild-only slash commands are restricted to guild install and guild interaction context", () => {
   const command = mockCommand("help", { guildOnly: true });
   applyProductionSlashCommandName(command);
 
   const json = commandToJSON(command);
   assert.equal(json.name, "pixy-help");
-  assert.equal(json.dm_permission, false);
+  assert.deepEqual(json.integration_types, [GUILD_INSTALL_TYPE]);
+  assert.deepEqual(json.contexts, [GUILD_INTERACTION_CONTEXT]);
+  assert.equal(Object.hasOwn(json, "dm_permission"), false);
 });
 
-test("commandToJSON does not force DM policy for non-guild-only modules", () => {
+test("guild-scoped registration does not send global integration/context fields", () => {
+  const command = mockCommand("settings", { guildOnly: true });
+  applyProductionSlashCommandName(command);
+
+  const json = commandToJSON(command, { globalScope: false });
+  assert.equal(json.name, "pixy-settings");
+  assert.equal(Object.hasOwn(json, "integration_types"), false);
+  assert.equal(Object.hasOwn(json, "contexts"), false);
+  assert.equal(Object.hasOwn(json, "dm_permission"), false);
+});
+
+test("commandToJSON does not force guild context for non-guild-only modules", () => {
   const command = mockCommand("example", { guildOnly: false });
   const json = commandToJSON(command);
+  assert.equal(Object.hasOwn(json, "integration_types"), false);
+  assert.equal(Object.hasOwn(json, "contexts"), false);
   assert.equal(Object.hasOwn(json, "dm_permission"), false);
 });
 
