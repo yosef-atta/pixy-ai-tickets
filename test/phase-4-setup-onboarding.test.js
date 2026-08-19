@@ -220,3 +220,48 @@ test("completed migrated setups stay completed instead of being forced through o
   assert.equal(state.lastStep, SETUP_STEPS.COMPLETE);
   assert.equal(extraReads, 0);
 });
+
+test("reopening setup keeps the AI step until the admin explicitly presses Next", async () => {
+  let savedState = {
+    id: "setup-progress",
+    guildId: GUILD_ID,
+    setupVersion: 2,
+    lastStep: SETUP_STEPS.AI_PROVIDER,
+    completedAt: null,
+  };
+  const client = {
+    guildSetupState: {
+      async findUnique() {
+        return { ...savedState };
+      },
+      async upsert({ create, update }) {
+        savedState = savedState ? { ...savedState, ...update } : { id: "setup-progress", ...create };
+        return { ...savedState };
+      },
+    },
+    ticketSource: {
+      async count() {
+        return 2;
+      },
+    },
+    guildConfig: {
+      async findUnique() {
+        return { ticketCategoryId: CATEGORY_A };
+      },
+    },
+    guildAiConfig: {
+      async findUnique() {
+        return { provider: "groq", credentialEncrypted: "encrypted-key" };
+      },
+    },
+    guildSetting: {
+      async findUnique() {
+        return { groqApiKeyEncrypted: "encrypted-key" };
+      },
+    },
+  };
+
+  const state = await reconcileSetupState(GUILD_ID, { client });
+  assert.equal(state.lastStep, SETUP_STEPS.AI_PROVIDER);
+  assert.equal(state.completedAt, null);
+});
