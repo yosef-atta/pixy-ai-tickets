@@ -1,4 +1,3 @@
-const { ChannelType } = require("discord.js");
 const { prisma } = require("../config/prisma");
 const {
   findMatchingSourceForChannel,
@@ -7,6 +6,9 @@ const {
 const {
   reconcileTicketChannel,
 } = require("../tickets/ticketChannelLifecycle");
+const {
+  isSupportedTicketChannel,
+} = require("../utils/tickets/ticketSurface");
 
 function cleanReason(value) {
   const text = String(value || "")
@@ -47,7 +49,7 @@ async function validateExcludedTicketTarget(guild, channelId, options = {}) {
   }
 
   const channel = options.channel || await getGuildChannel(guild, channelId);
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!channel || !isSupportedTicketChannel(channel)) {
     return { ok: false, code: "invalid_ticket_channel", sources, channel: null };
   }
 
