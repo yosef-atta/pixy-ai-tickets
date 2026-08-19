@@ -17,7 +17,14 @@ function cleanReason(value) {
 
 async function getGuildChannel(guild, channelId) {
   if (!guild || !channelId) return null;
-  return guild.channels?.cache?.get(channelId) || guild.channels?.fetch?.(channelId).catch(() => null) || null;
+  const cached = guild.channels?.cache?.get?.(channelId);
+  if (cached) return cached;
+  if (typeof guild.channels?.fetch !== "function") return null;
+  try {
+    return await guild.channels.fetch(channelId);
+  } catch {
+    return null;
+  }
 }
 
 async function listExcludedTickets(guildId, options = {}) {
@@ -79,32 +86,23 @@ async function excludeTicket(guild, channelId, reason, options = {}) {
   }
 
   const normalizedReason = cleanReason(reason);
-  let entry;
-  if (typeof client.$transaction === "function") {
-    [entry] = await client.$transaction([
-      client.guildIgnoredChannel.create({
-        data: {
-          guildId: guild.id,
-          channelId: validation.channel.id,
-          reason: normalizedReason,
-        },
-      }),
-      client.ticketChannel.deleteMany({
-        where: { guildId: guild.id, channelId: validation.channel.id },
-      }),
-    ]);
-  } else {
-    entry = await client.guildIgnoredChannel.create({
+  const write = async (tx) => {
+    const entry = await tx.guildIgnoredChannel.create({
       data: {
         guildId: guild.id,
         channelId: validation.channel.id,
         reason: normalizedReason,
       },
     });
-    await client.ticketChannel.deleteMany({
+    await tx.ticketChannel.deleteMany({
       where: { guildId: guild.id, channelId: validation.channel.id },
     });
-  }
+    return entry;
+  };
+
+  const entry = typeof client.$transaction === "function"
+    ? await client.$transaction(async (tx) => write(tx))
+    : await write(client);
 
   return {
     ok: true,
