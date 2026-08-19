@@ -6,6 +6,7 @@ const {
   isSubscriptionRejectionCode,
 } = require("../billing/entitlementService");
 const { TICKET_ACTIONS } = require("../utils/tickets/actions/ticketActionTypes");
+const { isThreadTicketChannel } = require("../utils/tickets/ticketSurface");
 
 const ACTION_SELECT_ID = "ticket_control_action";
 
@@ -33,6 +34,8 @@ const DISABLED_MESSAGES = Object.freeze({
     "Ticket renaming isn't available right now. You can continue using this ticket normally.",
   escalation_disabled:
     "Human escalation isn't available right now. Please continue describing your issue here so the support team can review it.",
+  thread_lifecycle_action_unsupported:
+    "Thread tickets always use Pixy's Smart Overlay. Pixy can help or hand the thread to human support, but it will not close, rename, move, or delete the thread.",
 });
 
 function getTicketControlAction(interaction) {
@@ -157,6 +160,20 @@ async function getTicketActionAvailability(interaction, options = {}) {
     select: { closed: true, aiEnabled: true },
   });
   if (!ticket || ticket.closed) return null;
+
+  if (
+    isThreadTicketChannel(interaction.channel) &&
+    (action === TICKET_ACTIONS.CLOSE_TICKET || action === TICKET_ACTIONS.RENAME_TICKET)
+  ) {
+    return {
+      available: false,
+      action,
+      code: "thread_lifecycle_action_unsupported",
+      message: DISABLED_MESSAGES.thread_lifecycle_action_unsupported,
+      refreshControls: true,
+      aiEnabled: ticket.aiEnabled !== false,
+    };
+  }
 
   const availability = await getGuildTicketActionAvailability(
     interaction.guild.id,
