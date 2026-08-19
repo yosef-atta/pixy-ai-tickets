@@ -34,6 +34,7 @@ const {
   clearKnowledge,
   deleteKnowledgeItem,
   getKnowledgeOverview,
+  importKnowledgeQnaBulk,
   listKnowledgeItems,
 } = require("../settings/knowledgeService");
 const {
@@ -70,6 +71,8 @@ const PREFIX = Object.freeze({
   KNOWLEDGE_ADD_QNA_MODAL: "settings_knowledge_add_qna_modal:",
   KNOWLEDGE_ADD_FREEFORM: "settings_knowledge_add_freeform:",
   KNOWLEDGE_ADD_FREEFORM_MODAL: "settings_knowledge_add_freeform_modal:",
+  KNOWLEDGE_QUICK_IMPORT: "settings_knowledge_quick_import:",
+  KNOWLEDGE_QUICK_IMPORT_MODAL: "settings_knowledge_quick_import_modal:",
   KNOWLEDGE_DELETE: "settings_knowledge_delete:",
   KNOWLEDGE_PAGE: "settings_knowledge_page:",
   KNOWLEDGE_CLEAR: "settings_knowledge_clear:",
@@ -435,9 +438,11 @@ async function renderKnowledge(guild, userId, page = 0, notice = null) {
     .setTitle("Knowledge")
     .setColor(0x57f287)
     .setDescription([
-      "Knowledge is server-specific information Pixy can use when answering ticket questions.",
+      "Knowledge is context Pixy can understand and reuse — it is **not** an exact FAQ matcher.",
+      "A Q&A entry gives Pixy an example question plus the fact behind it; future users can ask the same thing in completely different words.",
+      "For plans, packages, policies, pricing, or longer server information, one **Free-form** note is often enough for Pixy to answer many related questions.",
       writeState.available
-        ? "You can add Q&A items or longer free-form notes."
+        ? "Use **Quick Import** to paste several Q&A facts at once, or add one Q&A / Free-form note manually."
         : `New additions are currently locked: ${writeState.message}`,
     ].join("\n"))
     .addFields(
@@ -451,7 +456,10 @@ async function renderKnowledge(guild, userId, page = 0, notice = null) {
     });
 
   if (!list.items.length) {
-    embed.addFields({ name: "Items", value: "No knowledge has been added yet." });
+    embed.addFields({
+      name: "Example",
+      value: "Instead of adding separate FAQs for every wording, add a Free-form note such as **Gold Advertising Package** with its price, duration, benefits, and rules. Pixy can use those facts to answer different questions about the package.",
+    });
   } else {
     list.items.forEach((item, index) => {
       const number = list.page * list.pageSize + index + 1;
@@ -464,8 +472,13 @@ async function renderKnowledge(guild, userId, page = 0, notice = null) {
 
   const addRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
+      .setCustomId(scoped(PREFIX.KNOWLEDGE_QUICK_IMPORT, userId, list.page))
+      .setLabel("Quick Import")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(!writeState.available || atLimit),
+    new ButtonBuilder()
       .setCustomId(scoped(PREFIX.KNOWLEDGE_ADD_QNA, userId, list.page))
-      .setLabel("Add Q&A")
+      .setLabel("Add Q&A Fact")
       .setStyle(ButtonStyle.Primary)
       .setDisabled(!writeState.available || atLimit),
     new ButtonBuilder()
@@ -518,18 +531,18 @@ async function renderKnowledge(guild, userId, page = 0, notice = null) {
 function buildQnaModal(userId, page) {
   const question = new TextInputBuilder()
     .setCustomId("question")
-    .setLabel("Question")
+    .setLabel("Example question")
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
     .setMaxLength(500)
-    .setPlaceholder("Example: How do I buy Nitro?");
+    .setPlaceholder("Example: What is included in the Gold package?");
   const answer = new TextInputBuilder()
     .setCustomId("answer")
-    .setLabel("Answer")
+    .setLabel("What Pixy should know")
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
     .setMaxLength(1500)
-    .setPlaceholder("Write the answer Pixy should learn.");
+    .setPlaceholder("Write the fact or answer. Pixy can reuse it for differently worded questions.");
 
   return new ModalBuilder()
     .setCustomId(scoped(PREFIX.KNOWLEDGE_ADD_QNA_MODAL, userId, page))
@@ -543,18 +556,18 @@ function buildQnaModal(userId, page) {
 function buildFreeformModal(userId, page) {
   const title = new TextInputBuilder()
     .setCustomId("title")
-    .setLabel("Title")
+    .setLabel("Topic / title")
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
     .setMaxLength(120)
-    .setPlaceholder("Example: Refund policy");
+    .setPlaceholder("Example: Gold Advertising Package");
   const content = new TextInputBuilder()
     .setCustomId("content")
-    .setLabel("Knowledge content")
+    .setLabel("Everything Pixy should know")
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
     .setMaxLength(2500)
-    .setPlaceholder("Write the server-specific policy, rule, or information.");
+    .setPlaceholder("Price, duration, benefits, rules, eligibility, or any related details.");
 
   return new ModalBuilder()
     .setCustomId(scoped(PREFIX.KNOWLEDGE_ADD_FREEFORM_MODAL, userId, page))
@@ -565,14 +578,37 @@ function buildFreeformModal(userId, page) {
     );
 }
 
+function buildQuickImportModal(userId, page) {
+  const input = new TextInputBuilder()
+    .setCustomId("bulk_qna")
+    .setLabel("Paste Q&A facts")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(4000)
+    .setPlaceholder([
+      "Q: How much is the Gold package?",
+      "A: The Gold package costs ...",
+      "",
+      "Q: How long does it last?",
+      "A: It lasts ...",
+      "",
+      "Arabic also works: س: ... / ج: ...",
+    ].join("\n"));
+
+  return new ModalBuilder()
+    .setCustomId(scoped(PREFIX.KNOWLEDGE_QUICK_IMPORT_MODAL, userId, page))
+    .setTitle("Quick Import Knowledge")
+    .addComponents(new ActionRowBuilder().addComponents(input));
+}
+
 function knowledgeResultMessage(result, type) {
   if (result.ok) {
     return type === "qna"
-      ? `Q&A saved. Knowledge usage: **${result.total}/${result.limit}**.`
+      ? `Q&A fact saved. Knowledge usage: **${result.total}/${result.limit}**.`
       : `Free-form knowledge saved. Knowledge usage: **${result.total}/${result.limit}**.`;
   }
   if (result.code === "duplicate_question") {
-    return `That question is already learned. Existing item: \`${result.existingId}\`.`;
+    return `That example question is already learned. Existing item: \`${result.existingId}\`.`;
   }
   if (result.code === "knowledge_limit_reached") {
     return `This server reached its knowledge limit: **${result.total}/${result.limit}**.`;
@@ -581,6 +617,26 @@ function knowledgeResultMessage(result, type) {
     return "Knowledge additions are disabled for this server because its limit is 0.";
   }
   return `Pixy could not save that knowledge item: ${result.code || "unknown_error"}.`;
+}
+
+function bulkKnowledgeResultMessage(result) {
+  if (!result.ok) {
+    if (result.code === "bulk_no_valid_qna") {
+      return "No complete Q&A pairs were found. Use `Q:` + `A:` or Arabic `س:` + `ج:` markers.";
+    }
+    if (result.code === "knowledge_limit_reached") {
+      return `This server already reached its knowledge limit: **${result.total}/${result.limit}**.`;
+    }
+    return `Pixy could not import that knowledge: ${result.code || "unknown_error"}.`;
+  }
+
+  const notes = [`Imported **${result.added}** Q&A fact${result.added === 1 ? "" : "s"}.`];
+  if (result.duplicates) notes.push(`${result.duplicates} duplicate${result.duplicates === 1 ? "" : "s"} skipped.`);
+  if (result.incomplete) notes.push(`${result.incomplete} incomplete pair${result.incomplete === 1 ? "" : "s"} skipped.`);
+  if (result.skippedForLimit) notes.push(`${result.skippedForLimit} item${result.skippedForLimit === 1 ? "" : "s"} skipped because the server reached its knowledge limit.`);
+  if (result.truncated) notes.push("Only the first 20 parsed Q&A pairs were considered in this import.");
+  notes.push(`Knowledge usage: **${result.total}/${result.limit}**.`);
+  return notes.join(" ");
 }
 
 function safetyResultMessage(result, action) {
@@ -1083,6 +1139,15 @@ const command = {
       },
     },
     {
+      customIdPrefix: PREFIX.KNOWLEDGE_QUICK_IMPORT,
+      async execute(interaction) {
+        const [userId, pageRaw] = parseScoped(interaction.customId, PREFIX.KNOWLEDGE_QUICK_IMPORT);
+        if (!(await assertOwner(interaction, userId))) return;
+        if (!(await ensureKnowledgeWriteAllowed(interaction))) return;
+        await interaction.showModal(buildQuickImportModal(userId, Number(pageRaw) || 0));
+      },
+    },
+    {
       customIdPrefix: PREFIX.KNOWLEDGE_ADD_QNA,
       async execute(interaction) {
         const [userId, pageRaw] = parseScoped(interaction.customId, PREFIX.KNOWLEDGE_ADD_QNA);
@@ -1218,6 +1283,36 @@ const command = {
   ],
 
   modalHandlers: [
+    {
+      customIdPrefix: PREFIX.KNOWLEDGE_QUICK_IMPORT_MODAL,
+      async execute(interaction) {
+        const [userId, pageRaw] = parseScoped(interaction.customId, PREFIX.KNOWLEDGE_QUICK_IMPORT_MODAL);
+        if (!(await assertOwner(interaction, userId))) return;
+        await deferUpdate(interaction);
+        const writeState = await getKnowledgeWriteState(interaction.guild.id);
+        if (!writeState.available) {
+          await editPanel(
+            interaction,
+            await renderKnowledge(interaction.guild, userId, Number(pageRaw) || 0, writeState.message)
+          );
+          return;
+        }
+
+        const result = await importKnowledgeQnaBulk(
+          interaction.guild.id,
+          interaction.fields.getTextInputValue("bulk_qna")
+        );
+        await editPanel(
+          interaction,
+          await renderKnowledge(
+            interaction.guild,
+            userId,
+            0,
+            bulkKnowledgeResultMessage(result)
+          )
+        );
+      },
+    },
     {
       customIdPrefix: PREFIX.KNOWLEDGE_ADD_QNA_MODAL,
       async execute(interaction) {
@@ -1358,6 +1453,7 @@ module.exports = Object.assign(command, {
   BEHAVIOR_FEATURES,
   PAGES,
   PREFIX,
+  bulkKnowledgeResultMessage,
   formatPreflightIssues,
   knowledgeItemPreview,
   modeLabel,
