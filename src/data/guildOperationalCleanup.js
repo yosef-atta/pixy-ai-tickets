@@ -18,6 +18,9 @@ function buildOperationalDeleteOperations(client, guildId) {
     client.guildIgnoredChannel.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.guildBlockedTerm.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.guildAllowedTerm.deleteMany({ where: { guildId: normalizedGuildId } }),
+    client.ticketSource.deleteMany({ where: { guildId: normalizedGuildId } }),
+    client.guildAiConfig.deleteMany({ where: { guildId: normalizedGuildId } }),
+    client.guildSetupState.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.guildSetting.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.guildConfig.deleteMany({ where: { guildId: normalizedGuildId } }),
   ];
