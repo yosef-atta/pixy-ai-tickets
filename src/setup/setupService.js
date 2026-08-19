@@ -128,6 +128,7 @@ async function setTicketCategories(guildId, categoryIds, options = {}) {
   const client = options.client || prisma;
   const ids = normalizeIds(categoryIds);
   if (!ids.length) throw new TypeError("At least one ticket category is required.");
+  const activate = options.activate === true;
 
   const result = await withTransaction(client, async (tx) => {
     await ensureGuildConfig(guildId, { client: tx });
@@ -138,14 +139,17 @@ async function setTicketCategories(guildId, categoryIds, options = {}) {
     await tx.guildConfig.update({
       where: { guildId },
       data: {
-        enabled: true,
+        enabled: activate,
         ticketCategoryId: ids[0],
       },
     });
     return sources;
   });
 
-  if (options.guild) {
+  // First-run onboarding intentionally stays inactive until completion so Pixy
+  // does not send controls or attempt AI replies while the API credential is
+  // still being configured.
+  if (activate && options.guild) {
     await (options.reconcileTickets || reconcileGuildTicketChannels)(options.guild, {
       client,
       ensureControls: options.ensureControls !== false,
@@ -262,16 +266,22 @@ async function configureEscalationCategory(guild, categoryId, options = {}) {
   if (!guild?.id) throw new TypeError("A guild is required to configure human support.");
 
   const config = await ensureGuildConfig(guild.id, { client });
+  const categoryChanged = config.escalationCategoryId !== categoryId;
   await client.guildConfig.update({
     where: { guildId: guild.id },
-    data: { escalationCategoryId: categoryId },
+    data: {
+      escalationCategoryId: categoryId,
+      ...(categoryChanged ? { escalationNotificationChannelId: null } : {}),
+    },
   });
 
   const ensureNotification = options.ensureNotification || getOrCreateEscalationNotificationChannel;
   const notification = await ensureNotification({
     guild,
     categoryId,
-    existingChannelId: config.escalationNotificationChannelId || null,
+    existingChannelId: categoryChanged
+      ? null
+      : config.escalationNotificationChannelId || null,
   });
 
   return {
@@ -359,6 +369,7 @@ async function completeOnboarding(guildId, options = {}) {
   const client = options.client || prisma;
   const startTrial = options.startTrial || startTrialOnce;
   const refreshControls = options.refreshControls || refreshOpenTicketControlsAfterBillingMutation;
+  const reconcileTickets = options.reconcileTickets || reconcileGuildTicketChannels;
 
   // Billing is initialized only after the required onboarding steps are ready.
   const billing = await startTrial(guildId, {
@@ -366,6 +377,26 @@ async function completeOnboarding(guildId, options = {}) {
     actorUserId: options.actorUserId,
     now: options.now,
   });
+
+  await ensureGuildConfig(guildId, { client });
+  await client.guildConfig.update({
+    where: { guildId },
+    data: { enabled: true },
+  });
+
+  if (options.guild) {
+    await reconcileTickets(options.guild, {
+      client,
+      ensureControls: true,
+      logger: options.logger,
+    }).catch((error) => {
+      (options.logger || console).error?.(
+        "Failed to reconcile tickets after onboarding completion:",
+        error
+      );
+    });
+  }
+
   const state = await markSetupComplete(guildId, {
     client,
     now: options.now,
