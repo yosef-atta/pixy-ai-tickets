@@ -10,9 +10,11 @@ const {
   startTrialOnce,
 } = require("../src/billing/billingService");
 const {
-  completeAutomaticCategorySetup,
-  completeExistingCategorySetup,
-} = require("../src/slash/setup");
+  SETUP_STEPS,
+} = require("../src/config/productDefaults");
+const {
+  completeOnboarding,
+} = require("../src/setup/setupService");
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 
@@ -57,18 +59,37 @@ function createBillingClient(initialBilling = null) {
   };
 }
 
-function createSetupClient(order) {
-  return {
-    guildConfig: {
-      async upsert(args) {
-        order.push(["category.save", args]);
-        return {
-          guildId: args.where.guildId,
-          ticketCategoryId: args.create.ticketCategoryId,
-        };
-      },
+function addOnboardingState(client, order = []) {
+  let config = {
+    guildId: "123",
+    enabled: false,
+    maxLearnedItems: 50,
+    maxAdminRoutes: 10,
+  };
+  let setupState = null;
+
+  client.guildConfig = {
+    async findUnique() {
+      return { ...config };
+    },
+    async update({ data }) {
+      order.push(["guild.update", data]);
+      config = { ...config, ...data };
+      return { ...config };
     },
   };
+  client.guildSetupState = {
+    async upsert({ create, update }) {
+      order.push(["setup.upsert", create, update]);
+      setupState = setupState
+        ? { ...setupState, ...update }
+        : { id: "setup-1", ...create };
+      return { ...setupState };
+    },
+  };
+  client.getGuildConfig = () => ({ ...config });
+  client.getSetupState = () => setupState ? { ...setupState } : null;
+  return client;
 }
 
 test("startTrialOnce atomically creates exact seven-day trial and audit event", async () => {
@@ -113,70 +134,48 @@ test("startTrialOnce returns existing billing without extending dates or auditin
   assert.deepEqual(client.calls, [["billing.findUnique", { guildId: "123" }]]);
 });
 
-test("existing-category setup saves the category before starting the trial", async () => {
+test("completed onboarding starts the trial and activates Pixy at the final step", async () => {
   const order = [];
-  const client = createSetupClient(order);
+  const client = addOnboardingState(createBillingClient(), order);
 
-  await completeExistingCategorySetup("guild-1", "category-1", {
+  const result = await completeOnboarding("123", {
     client,
+    now: NOW,
+    actorUserId: "admin-user",
     async startTrial(guildId, options) {
-      order.push(["trial.start", guildId, options.client]);
+      order.push(["trial.start", guildId, options.actorUserId]);
+      return startTrialOnce(guildId, options);
     },
   });
 
-  assert.equal(order[0][0], "category.save");
-  assert.equal(order[1][0], "trial.start");
-  assert.equal(order[1][1], "guild-1");
-  assert.equal(order[1][2], client);
+  assert.equal(order[0][0], "trial.start");
+  assert.equal(order[0][1], "123");
+  assert.equal(order[0][2], "admin-user");
+  assert.equal(client.getGuildConfig().enabled, true);
+  assert.equal(result.state.lastStep, SETUP_STEPS.COMPLETE);
+  assert.equal(result.state.completedAt.getTime(), NOW.getTime());
+  assert.equal(client.events.length, 1);
 });
 
-test("automatic-category setup saves the category before starting the trial", async () => {
-  const order = [];
-  const client = createSetupClient(order);
+test("repeating completed onboarding never extends the original trial", async () => {
+  const client = addOnboardingState(createBillingClient());
 
-  await completeAutomaticCategorySetup("guild-2", "category-2", {
+  await completeOnboarding("123", {
     client,
-    async startTrial(guildId, options) {
-      order.push(["trial.start", guildId, options.client]);
-    },
+    now: NOW,
+    startTrial: (guildId, options) => startTrialOnce(guildId, options),
+  });
+  const firstStartedAt = client.billing.trialStartedAt.toISOString();
+  const firstEndsAt = client.billing.trialEndsAt.toISOString();
+
+  const later = new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000);
+  await completeOnboarding("123", {
+    client,
+    now: later,
+    startTrial: (guildId, options) => startTrialOnce(guildId, options),
   });
 
-  assert.equal(order[0][0], "category.save");
-  assert.equal(order[1][0], "trial.start");
-  assert.equal(order[1][1], "guild-2");
-  assert.equal(order[1][2], client);
-});
-
-test("repeated setup does not extend the original trial", async () => {
-  const billingClient = createBillingClient();
-  billingClient.guildConfig = {
-    async upsert({ where, create }) {
-      return {
-        guildId: where.guildId,
-        ticketCategoryId: create.ticketCategoryId,
-      };
-    },
-  };
-
-  await completeExistingCategorySetup("123", "category-1", {
-    client: billingClient,
-    startTrial: (guildId, options) => startTrialOnce(guildId, {
-      ...options,
-      now: NOW,
-    }),
-  });
-  const firstStartedAt = billingClient.billing.trialStartedAt.toISOString();
-  const firstEndsAt = billingClient.billing.trialEndsAt.toISOString();
-
-  await completeAutomaticCategorySetup("123", "category-2", {
-    client: billingClient,
-    startTrial: (guildId, options) => startTrialOnce(guildId, {
-      ...options,
-      now: new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000),
-    }),
-  });
-
-  assert.equal(billingClient.billing.trialStartedAt.toISOString(), firstStartedAt);
-  assert.equal(billingClient.billing.trialEndsAt.toISOString(), firstEndsAt);
-  assert.equal(billingClient.events.length, 1);
+  assert.equal(client.billing.trialStartedAt.toISOString(), firstStartedAt);
+  assert.equal(client.billing.trialEndsAt.toISOString(), firstEndsAt);
+  assert.equal(client.events.length, 1);
 });
