@@ -6,6 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "check": "node scripts/release-preflight.js",
     "db:up": "docker compose --env-file .env.docker up -d mysql",
     "db:down": "docker compose --env-file .env.docker down",
     "db:clear": "node scripts/clear-database.js",
