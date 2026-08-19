@@ -15,11 +15,12 @@ function interactionFor(field) {
   };
 }
 
-test("ticket lifecycle settings trigger open-ticket control refresh", () => {
+test("ticket control settings trigger open-ticket control refresh", () => {
   for (const field of [
     "closeTicketEnabled",
     "renameReviewEnabled",
     "escalationEnabled",
+    "agentActionsEnabled",
   ]) {
     assert.equal(
       shouldRefreshTicketControlsAfterSettingsChange(interactionFor(field)),
@@ -29,13 +30,9 @@ test("ticket lifecycle settings trigger open-ticket control refresh", () => {
   }
 });
 
-test("unrelated settings do not trigger ticket control refresh", () => {
+test("settings that do not change ticket control options skip refresh", () => {
   assert.equal(
     shouldRefreshTicketControlsAfterSettingsChange(interactionFor("aiReplyEnabled")),
-    false
-  );
-  assert.equal(
-    shouldRefreshTicketControlsAfterSettingsChange(interactionFor("agentActionsEnabled")),
     false
   );
   assert.equal(
