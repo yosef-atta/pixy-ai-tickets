@@ -22,6 +22,7 @@ const EXPECTED_PUBLIC_COMMANDS = [
   "help",
   "reset",
 ];
+const LEGACY_PUBLIC_COMMAND_PATTERN = /pixy-(?:admins|learn|mode|blacklist|clear)\b/i;
 
 function mockCommand(name, options = {}) {
   const data = {
@@ -45,6 +46,16 @@ function mockCommand(name, options = {}) {
   };
 }
 
+function listJsFilesRecursively(directory) {
+  const files = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...listJsFilesRecursively(fullPath));
+    else if (entry.isFile() && entry.name.endsWith(".js")) files.push(fullPath);
+  }
+  return files;
+}
+
 test("Phase 8 exposes only the consolidated Pixy slash command set", () => {
   assert.deepEqual(PUBLIC_SLASH_COMMANDS, EXPECTED_PUBLIC_COMMANDS);
 
@@ -61,6 +72,18 @@ test("Phase 8 exposes only the consolidated Pixy slash command set", () => {
     "settings.js",
     "setup.js",
   ]);
+});
+
+test("runtime source no longer references legacy public Pixy slash commands", () => {
+  const sourceRoot = path.join(__dirname, "../src");
+  for (const file of listJsFilesRecursively(sourceRoot)) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.doesNotMatch(
+      source,
+      LEGACY_PUBLIC_COMMAND_PATTERN,
+      `legacy public command reference remains in ${path.relative(sourceRoot, file)}`
+    );
+  }
 });
 
 test("legacy slash commands cannot pass the public bootstrap allowlist", () => {
