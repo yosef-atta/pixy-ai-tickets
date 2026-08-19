@@ -59,7 +59,7 @@ function parseBulkQnaText(value, options = {}) {
     const line = String(rawLine || "").trim();
     if (!line) continue;
 
-    const questionMatch = line.match(/^(?:q|question)\s*:\s*(.*)$/i);
+    const questionMatch = line.match(/^(?:q|question|س|سؤال)\s*[:：]\s*(.*)$/iu);
     if (questionMatch) {
       flush();
       current = { question: questionMatch[1] || "", answer: "" };
@@ -67,7 +67,7 @@ function parseBulkQnaText(value, options = {}) {
       continue;
     }
 
-    const answerMatch = line.match(/^(?:a|answer)\s*:\s*(.*)$/i);
+    const answerMatch = line.match(/^(?:a|answer|ج|جواب|إجابة|اجابة)\s*[:：]\s*(.*)$/iu);
     if (answerMatch) {
       if (!current) current = { question: "", answer: "" };
       current.answer = answerMatch[1] || "";
