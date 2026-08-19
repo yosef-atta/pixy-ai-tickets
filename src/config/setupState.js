@@ -1,6 +1,11 @@
 const { prisma } = require("./prisma");
 const {
+  getAiProvider,
+  providerRegistry,
+} = require("../ai/providers/providerRegistry");
+const {
   CURRENT_SETUP_VERSION,
+  DEFAULT_AI_PROVIDER,
   SETUP_STEPS,
 } = require("./productDefaults");
 
@@ -8,6 +13,24 @@ function normalizeGuildId(value) {
   const guildId = String(value || "").trim();
   if (!guildId) throw new TypeError("A guild ID is required to load setup state.");
   return guildId;
+}
+
+function hasConfiguredAiProvider(aiConfig, legacySetting) {
+  if (aiConfig) {
+    const providerId = String(aiConfig.provider || DEFAULT_AI_PROVIDER)
+      .trim()
+      .toLowerCase() || DEFAULT_AI_PROVIDER;
+
+    if (providerRegistry.has(providerId)) {
+      const provider = getAiProvider(providerId);
+      if (provider.requiresCredential === false) return true;
+      return Boolean(aiConfig.credentialEncrypted);
+    }
+
+    return Boolean(aiConfig.credentialEncrypted);
+  }
+
+  return Boolean(legacySetting?.groqApiKeyEncrypted);
 }
 
 async function inferSetupProgress(guildId, options = {}) {
@@ -24,7 +47,10 @@ async function inferSetupProgress(guildId, options = {}) {
     }),
     client.guildAiConfig.findUnique({
       where: { guildId: normalizedGuildId },
-      select: { credentialEncrypted: true },
+      select: {
+        provider: true,
+        credentialEncrypted: true,
+      },
     }),
     client.guildSetting.findUnique({
       where: { guildId: normalizedGuildId },
@@ -33,9 +59,7 @@ async function inferSetupProgress(guildId, options = {}) {
   ]);
 
   const hasTicketSource = sourceCount > 0 || Boolean(config?.ticketCategoryId);
-  const hasAiCredential = Boolean(
-    aiConfig?.credentialEncrypted || legacySetting?.groqApiKeyEncrypted
-  );
+  const hasAiConfiguration = hasConfiguredAiProvider(aiConfig, legacySetting);
 
   if (!hasTicketSource) {
     return {
@@ -44,36 +68,39 @@ async function inferSetupProgress(guildId, options = {}) {
     };
   }
 
-  if (!hasAiCredential) {
+  if (!hasAiConfiguration) {
     return {
       lastStep: SETUP_STEPS.AI_PROVIDER,
       completed: false,
     };
   }
 
+  // Human support is optional, but the first-run wizard still gives the admin
+  // an explicit chance to configure or skip it before setup is considered done.
   return {
-    lastStep: SETUP_STEPS.COMPLETE,
-    completed: true,
+    lastStep: SETUP_STEPS.HUMAN_SUPPORT,
+    completed: false,
   };
 }
 
 async function reconcileSetupState(guildId, options = {}) {
   const client = options.client || prisma;
   const normalizedGuildId = normalizeGuildId(guildId);
-  const progress = await inferSetupProgress(normalizedGuildId, { client });
   const existing = await client.guildSetupState.findUnique({
     where: { guildId: normalizedGuildId },
   });
 
+  // Migrated or already-completed servers stay completed. Runtime health is
+  // shown by /pixy-setup instead of forcing onboarding to restart.
   if (existing?.completedAt && existing.setupVersion === CURRENT_SETUP_VERSION) {
     return existing;
   }
 
-  const now = options.now instanceof Date ? options.now : new Date();
+  const progress = await inferSetupProgress(normalizedGuildId, { client });
   const data = {
     setupVersion: CURRENT_SETUP_VERSION,
     lastStep: progress.lastStep,
-    completedAt: progress.completed ? existing?.completedAt || now : null,
+    completedAt: null,
   };
 
   return client.guildSetupState.upsert({
@@ -121,6 +148,7 @@ async function markSetupComplete(guildId, options = {}) {
 
 module.exports = {
   getOrCreateSetupState,
+  hasConfiguredAiProvider,
   inferSetupProgress,
   markSetupComplete,
   markSetupStep,
