@@ -31,7 +31,8 @@ function describeMode(mode) {
   if (mode === TICKET_OPERATING_MODES.OVERLAY) {
     return [
       "**Smart Overlay** — recommended",
-      "Pixy focuses on AI support and human handoff. Close and Rename stay hidden, and escalation does not take over the ticket lifecycle.",
+      "Pixy focuses on AI support without taking over the ticket lifecycle. Close and Rename stay hidden.",
+      "Human handoff remains available only when Human Support is configured and Escalation is enabled in `/pixy-settings`.",
       "Use this when another ticket bot or a custom ticket system already manages the ticket.",
     ].join("\n");
   }
@@ -102,11 +103,11 @@ module.exports = {
       if (!preflight.ok) {
         await interaction.reply({
           content: [
-            "Full Ticket Control was **not enabled** because Pixy is missing required permissions.",
+            "Full Ticket Control was **not enabled** because Pixy is missing required permissions or Human Support setup.",
             "",
             formatPreflightIssues(preflight),
             "",
-            "Smart Overlay can keep working without these destructive permissions. Fix the items above, then enable Full Ticket Control again.",
+            "Smart Overlay can keep working without these destructive permissions. Fix the items above in `/pixy-setup`, then enable Full Ticket Control again.",
           ].join("\n"),
           flags: EPHEMERAL,
           allowedMentions: { parse: [] },
