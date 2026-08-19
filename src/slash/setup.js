@@ -1,5 +1,6 @@
 const {
   ActionRowBuilder,
+  ChannelType,
   EmbedBuilder,
   PermissionFlagsBits,
   StringSelectMenuBuilder,
@@ -16,6 +17,8 @@ const {
   setGuildAiProvider,
 } = require("../config/guildAiConfig");
 const {
+  configureEscalationCategory,
+  createOrFindEscalationCategory,
   listSetupTicketSources,
   moveSetupToAiProvider,
 } = require("../setup/setupService");
@@ -55,6 +58,43 @@ async function editPanel(interaction, payload) {
   } else {
     await interaction.update(next);
   }
+}
+
+async function getCategory(guild, categoryId) {
+  if (!guild || !categoryId) return null;
+  const cached = guild.channels?.cache?.get(categoryId);
+  if (cached?.type === ChannelType.GuildCategory) return cached;
+  const fetched = await guild.channels?.fetch?.(categoryId).catch(() => null);
+  return fetched?.type === ChannelType.GuildCategory ? fetched : null;
+}
+
+function formatNotificationSetupFailure(notification) {
+  const code = String(notification?.code || "");
+  const labels = [...new Set(
+    (notification?.missingPermissionLabels || [])
+      .map((label) => String(label || "").trim())
+      .filter(Boolean)
+  )];
+
+  if (code === "missing_manage_channels_permission") {
+    return "Pixy needs **Manage Channels** to create or repair the Human Support notification channel. Grant it, then press **Create/Repair Notification Channel** again.";
+  }
+
+  if (code === "missing_notification_channel_permissions" && labels.length) {
+    return `Pixy is missing **${labels.join("** and **")}** in the Human Support notification channel. Grant ${labels.length === 1 ? "that permission" : "those permissions"} to the bot role or channel overrides, then press **Create/Repair Notification Channel** again.`;
+  }
+
+  if (code === "notification_channel_create_failed") {
+    return "Discord rejected the notification channel creation. Check Pixy's **Manage Channels** permission and any category permission overrides, then try Repair again.";
+  }
+
+  if (code === "missing_escalation_category") {
+    return "Choose a Human Support escalation category before creating the notification channel.";
+  }
+
+  return code
+    ? `Pixy could not prepare the Human Support notification channel (${code}).`
+    : "Pixy could not prepare the Human Support notification channel.";
 }
 
 function orderedProviders(providers = listAiProviders()) {
@@ -208,8 +248,121 @@ providerSelectHandler.execute = async function executeProviderSelect(interaction
   );
 };
 
+const humanCategoryCreateHandler = core.buttonHandlers.find(
+  (handler) => handler.customIdPrefix === PREFIX.HUMAN_CATEGORY_CREATE
+);
+if (!humanCategoryCreateHandler) {
+  throw new Error("Pixy setup Human Support category-create handler is missing.");
+}
+
+humanCategoryCreateHandler.execute = async function executeHumanCategoryCreate(interaction) {
+  const { mode, userId } = core.parseScoped(interaction.customId, PREFIX.HUMAN_CATEGORY_CREATE);
+  if (!(await assertOwner(interaction, userId))) return;
+  await deferUpdate(interaction);
+
+  const result = await createOrFindEscalationCategory(interaction.guild);
+  if (!result.ok || !result.category) {
+    const notice = result.code === "missing_manage_channels_permission"
+      ? "Pixy needs **Manage Channels** to create the Human Support category. Grant it, then try again."
+      : "Pixy could not create the Human Support category automatically.";
+    await editPanel(
+      interaction,
+      await core.renderHumanSupport(interaction.guild, userId, mode, notice)
+    );
+    return;
+  }
+
+  const configured = await configureEscalationCategory(interaction.guild, result.category.id);
+  const notice = configured.notification.ok
+    ? `Human Support category saved as **${result.category.name}**.`
+    : `Human Support category **${result.category.name}** is saved. ${formatNotificationSetupFailure(configured.notification)}`;
+  await editPanel(
+    interaction,
+    await core.renderHumanSupport(interaction.guild, userId, mode, notice)
+  );
+};
+
+const humanRetryHandler = core.buttonHandlers.find(
+  (handler) => handler.customIdPrefix === PREFIX.HUMAN_RETRY_NOTIFICATION
+);
+if (!humanRetryHandler) {
+  throw new Error("Pixy setup Human Support notification-repair handler is missing.");
+}
+
+humanRetryHandler.execute = async function executeHumanNotificationRepair(interaction) {
+  const { mode, userId } = core.parseScoped(interaction.customId, PREFIX.HUMAN_RETRY_NOTIFICATION);
+  if (!(await assertOwner(interaction, userId))) return;
+  await deferUpdate(interaction);
+
+  const config = await prisma.guildConfig.findUnique({
+    where: { guildId: interaction.guild.id },
+  });
+  if (!config?.escalationCategoryId) {
+    await editPanel(
+      interaction,
+      await core.renderHumanSupport(
+        interaction.guild,
+        userId,
+        mode,
+        "Choose an escalation category first."
+      )
+    );
+    return;
+  }
+
+  const configured = await configureEscalationCategory(
+    interaction.guild,
+    config.escalationCategoryId
+  );
+  const notice = configured.notification.ok
+    ? "Human Support notification channel is ready."
+    : formatNotificationSetupFailure(configured.notification);
+  await editPanel(
+    interaction,
+    await core.renderHumanSupport(interaction.guild, userId, mode, notice)
+  );
+};
+
+const humanCategorySelectHandler = core.selectMenuHandlers.find(
+  (handler) => handler.customIdPrefix === PREFIX.HUMAN_CATEGORY_SELECT
+);
+if (!humanCategorySelectHandler) {
+  throw new Error("Pixy setup Human Support category-select handler is missing.");
+}
+
+humanCategorySelectHandler.execute = async function executeHumanCategorySelect(interaction) {
+  const { mode, userId } = core.parseScoped(interaction.customId, PREFIX.HUMAN_CATEGORY_SELECT);
+  if (!(await assertOwner(interaction, userId))) return;
+  await deferUpdate(interaction);
+
+  const categoryId = interaction.values?.[0];
+  const category = await getCategory(interaction.guild, categoryId);
+  if (!category) {
+    await editPanel(
+      interaction,
+      await core.renderHumanSupport(
+        interaction.guild,
+        userId,
+        mode,
+        "That category no longer exists."
+      )
+    );
+    return;
+  }
+
+  const configured = await configureEscalationCategory(interaction.guild, category.id);
+  const notice = configured.notification.ok
+    ? `Human Support category saved as **${category.name}**.`
+    : `Human Support category **${category.name}** is saved. ${formatNotificationSetupFailure(configured.notification)}`;
+  await editPanel(
+    interaction,
+    await core.renderHumanSupport(interaction.guild, userId, mode, notice)
+  );
+};
+
 module.exports = Object.assign(core, {
   buildInitialProviderChoice,
+  formatNotificationSetupFailure,
   getSavedAiProviderRecord,
   orderedProviders,
   renderOnboardingAiProvider,
