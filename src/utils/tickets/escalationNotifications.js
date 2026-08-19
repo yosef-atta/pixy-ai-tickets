@@ -5,6 +5,9 @@ const {
 
 const { prisma } = require("../../config/prisma");
 const { aiConfig } = require("../../config/ai");
+const {
+  getBotMember,
+} = require("./humanSupportPermissions");
 
 function getNotificationChannelName() {
   return String(
@@ -51,18 +54,6 @@ async function getRecentTicketContext(ticketChannel) {
     return recent.length ? recent.join("\n") : "No recent user messages were available.";
   } catch {
     return "Recent ticket messages could not be loaded.";
-  }
-}
-
-async function getBotMember(guild) {
-  if (!guild) return null;
-
-  if (guild.members?.me) return guild.members.me;
-
-  try {
-    return await guild.members.fetchMe();
-  } catch {
-    return null;
   }
 }
 
@@ -113,7 +104,7 @@ async function findNotificationChannelInCategory(guild, categoryId) {
 }
 
 async function canSendInChannel(channel) {
-  const botMember = await getBotMember(channel.guild);
+  const botMember = await getBotMember(channel?.guild);
   if (!botMember) return false;
 
   const permissions = channel.permissionsFor(botMember);
@@ -126,14 +117,12 @@ async function canSendInChannel(channel) {
 
 async function canMentionRoleInChannel(channel, role) {
   if (!channel || !role) return false;
-
   if (role.mentionable) return true;
 
   const botMember = await getBotMember(channel.guild);
   if (!botMember) return false;
 
   const permissions = channel.permissionsFor(botMember);
-
   return Boolean(permissions?.has(PermissionFlagsBits.MentionEveryone));
 }
 
@@ -222,6 +211,7 @@ async function sendEscalationNotification({
   const details = summary && typeof summary === "object" && !Array.isArray(summary)
     ? summary
     : {};
+  const roleCanBePinged = await canMentionRoleInChannel(notificationChannel, role);
 
   const sections = [
     "🚨 **Ticket Escalated**",
@@ -229,6 +219,7 @@ async function sendEscalationNotification({
     `**Ticket Channel:** <#${ticketChannel.id}>`,
     `**Support Role:** <@&${role.id}>`,
     `**Support Team:** ${role.name}`,
+    roleCanBePinged ? null : "**Role Ping:** Not sent — the role is not mentionable. The handoff still completed.",
     `**New Ticket Name:** ${newName || ticketChannel.name}`,
     routeId ? `**Route ID:** \`${routeId}\`` : null,
     requestedBy
@@ -262,18 +253,23 @@ async function sendEscalationNotification({
     content = `${content.slice(0, 1947).trim()}...`;
   }
 
-  return notificationChannel.send({
+  const message = await notificationChannel.send({
     content,
     allowedMentions: {
-      roles: [role.id],
+      roles: roleCanBePinged ? [role.id] : [],
       users: [],
       repliedUser: false,
     },
   });
+
+  return Object.assign(message, {
+    pixyRolePinged: roleCanBePinged,
+  });
 }
 
 module.exports = {
+  canMentionRoleInChannel,
+  canSendInChannel,
   getOrCreateEscalationNotificationChannel,
   sendEscalationNotification,
-  canMentionRoleInChannel,
 };
