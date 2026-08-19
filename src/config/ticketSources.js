@@ -115,7 +115,7 @@ async function replaceCategoryTicketSources(guildId, categoryIds, options = {}) 
     return saved;
   };
 
-  if (typeof client.$transaction === "function") {
+  if (options.useTransaction !== false && typeof client.$transaction === "function") {
     return client.$transaction(async (tx) => execute(tx));
   }
   return execute(client);
