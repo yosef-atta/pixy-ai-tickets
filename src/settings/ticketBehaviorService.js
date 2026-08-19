@@ -1,6 +1,5 @@
 const { prisma } = require("../config/prisma");
 const { getOrCreateGuildSetting } = require("../config/ai");
-const { ensureGuildConfig } = require("../config/guildConfigFoundation");
 const {
   TICKET_OPERATING_MODES,
   getTicketOperatingModePreferences,
@@ -53,6 +52,11 @@ async function withTransaction(client, callback) {
   return callback(client);
 }
 
+async function getExistingCoreConfig(guildId, client) {
+  if (typeof client.guildConfig?.findUnique !== "function") return null;
+  return client.guildConfig.findUnique({ where: { guildId } });
+}
+
 async function saveBehaviorPatch(guild, patch, options = {}) {
   const client = options.client || prisma;
   const getSetting = options.getSetting || getOrCreateGuildSetting;
@@ -67,6 +71,16 @@ async function saveBehaviorPatch(guild, patch, options = {}) {
   );
   if (!Object.keys(normalizedPatch).length) {
     return { ok: false, code: "empty_behavior_patch" };
+  }
+
+  const coreConfig = Object.prototype.hasOwnProperty.call(options, "coreConfig")
+    ? options.coreConfig
+    : await getExistingCoreConfig(guild.id, client);
+  if (!coreConfig) {
+    return {
+      ok: false,
+      code: "setup_required",
+    };
   }
 
   const current = await getSetting(guild.id);
@@ -88,10 +102,6 @@ async function saveBehaviorPatch(guild, patch, options = {}) {
         prospective,
       };
     }
-  }
-
-  if (Object.prototype.hasOwnProperty.call(normalizedPatch, "aiReplyEnabled")) {
-    await ensureGuildConfig(guild.id, { client });
   }
 
   await withTransaction(client, async (tx) => {
@@ -138,8 +148,15 @@ async function setTicketOperatingMode(guild, mode, options = {}) {
     return { ok: false, code: "unsupported_ticket_operating_mode" };
   }
 
+  const client = options.client || prisma;
+  const coreConfig = Object.prototype.hasOwnProperty.call(options, "coreConfig")
+    ? options.coreConfig
+    : await getExistingCoreConfig(guild?.id, client);
+  if (!coreConfig) {
+    return { ok: false, code: "setup_required" };
+  }
+
   if (mode === TICKET_OPERATING_MODES.FULL) {
-    const client = options.client || prisma;
     const preflight = options.preflightFullControl || preflightFullControlForGuild;
     const permissionCheck = await preflight(guild, { client });
     if (!permissionCheck.ok) {
@@ -153,6 +170,8 @@ async function setTicketOperatingMode(guild, mode, options = {}) {
 
   return saveBehaviorPatch(guild, preferences, {
     ...options,
+    client,
+    coreConfig,
     // Full mode was checked above; avoid doing the same network-heavy preflight
     // twice while still allowing saveBehaviorPatch to protect direct toggles.
     preflightFullControl: mode === TICKET_OPERATING_MODES.FULL
@@ -166,10 +185,20 @@ async function toggleBehaviorField(guild, field, options = {}) {
     return { ok: false, code: "unsupported_behavior_field" };
   }
 
+  const client = options.client || prisma;
+  const coreConfig = Object.prototype.hasOwnProperty.call(options, "coreConfig")
+    ? options.coreConfig
+    : await getExistingCoreConfig(guild?.id, client);
+  if (!coreConfig) {
+    return { ok: false, code: "setup_required" };
+  }
+
   const getSetting = options.getSetting || getOrCreateGuildSetting;
   const current = await getSetting(guild.id);
   return saveBehaviorPatch(guild, { [field]: current[field] !== true }, {
     ...options,
+    client,
+    coreConfig,
     getSetting: async () => current,
   });
 }
@@ -179,6 +208,7 @@ module.exports = {
   BEHAVIOR_FIELD_SET,
   CONTROL_FIELDS,
   buildProspectiveSettings,
+  getExistingCoreConfig,
   pickBehaviorSettings,
   requiresControlRefresh,
   saveBehaviorPatch,
