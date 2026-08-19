@@ -1,4 +1,5 @@
 const { Events, Collection } = require("discord.js");
+const { prisma } = require("../config/prisma");
 const {
   DISABLED_MESSAGES,
   getTicketActionAvailability,
@@ -8,6 +9,7 @@ const {
 } = require("../features/learnSubscription");
 
 const DEFAULT_ERROR_MESSAGE = "An error occurred while executing this interaction.";
+const SETTINGS_COMPONENT_PREFIX = "settings_";
 const SETTINGS_TOGGLE_PREFIX = "settings_toggle:";
 const TICKET_CONTROL_SETTING_FIELDS = new Set([
   "closeTicketEnabled",
@@ -55,6 +57,41 @@ async function safeReply(interaction, payload) {
     else await interaction.reply(finalPayload);
   } catch {
     // Prevent crashes if Discord rejects the reply or follow-up.
+  }
+}
+
+function isSettingsComponent(interaction) {
+  return Boolean(
+    interaction?.customId &&
+    String(interaction.customId).startsWith(SETTINGS_COMPONENT_PREFIX)
+  );
+}
+
+async function stopUnavailableSettingsInteraction(interaction, options = {}) {
+  if (!isSettingsComponent(interaction) || !interaction.guild?.id) return false;
+
+  try {
+    const client = options.client || prisma;
+    const config = await client.guildConfig.findUnique({
+      where: { guildId: interaction.guild.id },
+      select: { guildId: true },
+    });
+    if (config) return false;
+
+    const reply = options.reply || safeReply;
+    await reply(
+      interaction,
+      DISABLED_MESSAGES.setup_required ||
+        "Pixy core setup is not configured. Run `/pixy-setup` first."
+    );
+    return true;
+  } catch (error) {
+    console.error("Settings setup preflight failed:", error);
+    await (options.reply || safeReply)(
+      interaction,
+      "Pixy could not verify the server setup right now. Please try again."
+    );
+    return true;
   }
 }
 
@@ -358,6 +395,7 @@ const interactionCreateEvent = {
     }
 
     if (interaction.isButton()) {
+      if (await stopUnavailableSettingsInteraction(interaction)) return;
       if (await stopUnavailableTicketAction(interaction)) return;
       const handler = findButtonHandler(interaction);
       if (handler) await runInteraction(interaction, `Button ${interaction.customId}`, handler, () => handler.execute(interaction));
@@ -365,6 +403,7 @@ const interactionCreateEvent = {
     }
 
     if (isAnySelectMenu(interaction)) {
+      if (await stopUnavailableSettingsInteraction(interaction)) return;
       if (await stopUnavailableTicketAction(interaction)) return;
       const handler = findSelectMenuHandler(interaction);
       if (handler) {
@@ -382,6 +421,7 @@ const interactionCreateEvent = {
     }
 
     if (interaction.isModalSubmit()) {
+      if (await stopUnavailableSettingsInteraction(interaction)) return;
       const handler = findModalHandler(interaction);
       if (!handler) return;
       await runInteraction(
@@ -400,10 +440,12 @@ const interactionCreateEvent = {
 
 module.exports = Object.assign(interactionCreateEvent, {
   getInteractionErrorMessage,
+  isSettingsComponent,
   refreshExpiredTicketControls,
   refreshTicketControlsAfterSettingsChange,
   safeReply,
   shouldRefreshTicketControlsAfterSettingsChange,
   stopUnavailableLearnInteraction,
+  stopUnavailableSettingsInteraction,
   stopUnavailableTicketAction,
 });
