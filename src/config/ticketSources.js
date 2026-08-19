@@ -1,3 +1,4 @@
+const { ChannelType } = require("discord.js");
 const { prisma } = require("./prisma");
 const { TICKET_SOURCE_TYPES } = require("./productDefaults");
 
@@ -35,6 +36,33 @@ async function listTicketSources(guildId, options = {}) {
   });
 }
 
+async function listResolvedTicketSources(guildId, options = {}) {
+  const client = options.client || prisma;
+  const normalizedGuildId = normalizeGuildId(guildId);
+  const sources = await listTicketSources(normalizedGuildId, {
+    client,
+    includeDisabled: options.includeDisabled,
+  });
+
+  if (sources.length || options.includeLegacyFallback === false) return sources;
+
+  const config = await client.guildConfig.findUnique({
+    where: { guildId: normalizedGuildId },
+    select: { ticketCategoryId: true },
+  });
+
+  if (!config?.ticketCategoryId) return [];
+
+  return [{
+    id: null,
+    guildId: normalizedGuildId,
+    type: TICKET_SOURCE_TYPES.CATEGORY,
+    sourceId: config.ticketCategoryId,
+    enabled: true,
+    legacyFallback: true,
+  }];
+}
+
 async function upsertTicketSource({ guildId, type, sourceId, enabled = true }, options = {}) {
   const client = options.client || prisma;
   const normalizedGuildId = normalizeGuildId(guildId);
@@ -59,6 +87,38 @@ async function upsertTicketSource({ guildId, type, sourceId, enabled = true }, o
       enabled: enabled !== false,
     },
   });
+}
+
+async function replaceCategoryTicketSources(guildId, categoryIds, options = {}) {
+  const client = options.client || prisma;
+  const normalizedGuildId = normalizeGuildId(guildId);
+  const normalizedIds = [...new Set((categoryIds || []).map(normalizeSourceId))];
+
+  const execute = async (tx) => {
+    await tx.ticketSource.deleteMany({
+      where: {
+        guildId: normalizedGuildId,
+        type: TICKET_SOURCE_TYPES.CATEGORY,
+        ...(normalizedIds.length ? { sourceId: { notIn: normalizedIds } } : {}),
+      },
+    });
+
+    const saved = [];
+    for (const sourceId of normalizedIds) {
+      saved.push(await upsertTicketSource({
+        guildId: normalizedGuildId,
+        type: TICKET_SOURCE_TYPES.CATEGORY,
+        sourceId,
+        enabled: true,
+      }, { client: tx }));
+    }
+    return saved;
+  };
+
+  if (typeof client.$transaction === "function") {
+    return client.$transaction(async (tx) => execute(tx));
+  }
+  return execute(client);
 }
 
 async function ensureLegacyTicketCategorySource(guildId, options = {}) {
@@ -99,12 +159,36 @@ async function getTicketSource(guildId, type, sourceId, options = {}) {
   });
 }
 
+function findMatchingSourceForChannel(channel, sources = []) {
+  if (!channel) return null;
+
+  if (channel.type === ChannelType.GuildText) {
+    return sources.find((source) =>
+      source?.enabled !== false &&
+      source.type === TICKET_SOURCE_TYPES.CATEGORY &&
+      source.sourceId === channel.parentId
+    ) || null;
+  }
+
+  return null;
+}
+
+async function matchTicketSourceForChannel(channel, options = {}) {
+  if (!channel?.guild?.id) return null;
+  const sources = options.sources || await listResolvedTicketSources(channel.guild.id, options);
+  return findMatchingSourceForChannel(channel, sources);
+}
+
 module.exports = {
   ensureLegacyTicketCategorySource,
+  findMatchingSourceForChannel,
   getTicketSource,
+  listResolvedTicketSources,
   listTicketSources,
+  matchTicketSourceForChannel,
   normalizeGuildId,
   normalizeSourceId,
   normalizeSourceType,
+  replaceCategoryTicketSources,
   upsertTicketSource,
 };
