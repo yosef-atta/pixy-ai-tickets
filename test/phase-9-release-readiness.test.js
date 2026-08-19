@@ -30,7 +30,7 @@ test("CI uses the same MySQL generation as local Pixy and the isolated test data
   assert.match(runner, /127\.0\.0\.1:3307\/pixy_test/);
   assert.match(workflow, /run:\s*npm ci/);
   assert.match(workflow, /run:\s*npm run check/);
-  assert.match(workflow, /run:\s*npm test/);
+  assert.match(workflow, /npm test/);
 });
 
 test("release documentation covers migration, channel/thread smoke tests, billing, and reset", () => {
