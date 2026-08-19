@@ -59,7 +59,7 @@ async function getOrCreateGuildSetting(guildId) {
   if (existing) return existing;
 
   // Settings are secondary configuration. Do not let /pixy-settings or a stale
-  // component interaction recreate operational state after /pixy-clear.
+  // component interaction recreate operational state after /pixy-reset.
   const coreConfig = await prisma.guildConfig.findUnique({
     where: { guildId: normalizedGuildId },
     select: { guildId: true },
