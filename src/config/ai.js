@@ -41,6 +41,12 @@ const aiConfig = {
   },
 };
 
+function createSetupRequiredError() {
+  const error = new Error("Run /pixy-setup before managing Pixy settings.");
+  error.code = "setup_required";
+  return error;
+}
+
 async function getOrCreateGuildSetting(guildId) {
   const normalizedGuildId = String(guildId || "").trim();
   if (!normalizedGuildId) {
@@ -51,6 +57,14 @@ async function getOrCreateGuildSetting(guildId) {
     where: { guildId: normalizedGuildId },
   });
   if (existing) return existing;
+
+  // Settings are secondary configuration. Do not let /pixy-settings or a stale
+  // component interaction recreate operational state after /pixy-clear.
+  const coreConfig = await prisma.guildConfig.findUnique({
+    where: { guildId: normalizedGuildId },
+    select: { guildId: true },
+  });
+  if (!coreConfig) throw createSetupRequiredError();
 
   try {
     return await prisma.guildSetting.create({
@@ -109,6 +123,7 @@ async function getGuildAiConfig(
 
 module.exports = {
   aiConfig,
+  createSetupRequiredError,
   defaultAiConfig,
   getGuildAiConfig,
   getOrCreateGuildSetting,
