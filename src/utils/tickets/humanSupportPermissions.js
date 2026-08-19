@@ -13,10 +13,16 @@ const {
 const {
   isFullTicketControlEnabled,
 } = require("../../features/ticketOperatingMode");
+const {
+  THREAD_PARENT_REQUIRED_PERMISSIONS,
+  isThreadParentChannel,
+  isThreadTicketChannel,
+} = require("./ticketSurface");
 
 const PERMISSION_LABELS = new Map([
   [PermissionFlagsBits.ViewChannel, "View Channel"],
   [PermissionFlagsBits.SendMessages, "Send Messages"],
+  [PermissionFlagsBits.SendMessagesInThreads, "Send Messages in Threads"],
   [PermissionFlagsBits.ReadMessageHistory, "Read Message History"],
   [PermissionFlagsBits.ManageChannels, "Manage Channels"],
   [PermissionFlagsBits.ManageRoles, "Manage Roles / Permissions"],
@@ -88,6 +94,19 @@ async function preflightFullControlForTicket({
     };
   }
 
+  if (isThreadTicketChannel(ticketChannel)) {
+    return {
+      ok: false,
+      code: "thread_overlay_only",
+      issues: [{
+        scope: "thread",
+        code: "thread_overlay_only",
+        missingPermissions: [],
+        labels: ["Thread tickets always use Smart Overlay for lifecycle safety"],
+      }],
+    };
+  }
+
   if (!ticketChannel || ticketChannel.type !== ChannelType.GuildText) {
     return {
       ok: false,
@@ -150,12 +169,6 @@ async function preflightFullControlForGuild(guild, options = {}) {
   }
 
   const issues = [];
-  const guildMissing = getMissingPermissions(botMember.permissions, [
-    PermissionFlagsBits.ManageChannels,
-    PermissionFlagsBits.ManageRoles,
-  ]);
-  if (guildMissing.length) issues.push(buildIssue("server", guildMissing));
-
   const canLoadRoutes = Array.isArray(options.routes) || typeof client.adminRoute?.findMany === "function";
   const [sources, config, routes] = await Promise.all([
     options.sources || listResolvedTicketSources(guild.id, { client }),
@@ -174,40 +187,82 @@ async function preflightFullControlForGuild(guild, options = {}) {
         : Promise.resolve([]),
   ]);
 
+  const hasCategorySources = sources.some((source) =>
+    source.type === TICKET_SOURCE_TYPES.CATEGORY && source.enabled !== false
+  );
+  if (hasCategorySources) {
+    const guildMissing = getMissingPermissions(botMember.permissions, [
+      PermissionFlagsBits.ManageChannels,
+      PermissionFlagsBits.ManageRoles,
+    ]);
+    if (guildMissing.length) issues.push(buildIssue("server", guildMissing));
+  }
+
   const [channelsFetched, rolesFetched] = await Promise.all([
     refreshGuildChannels(guild),
     refreshGuildRoles(guild),
   ]);
 
   for (const source of sources) {
-    if (source.type !== TICKET_SOURCE_TYPES.CATEGORY) continue;
-    const category = guild.channels?.cache?.get?.(source.sourceId);
-    if (!category || category.type !== ChannelType.GuildCategory) {
-      if (channelsFetched) {
+    if (source.enabled === false) continue;
+    const sourceChannel = guild.channels?.cache?.get?.(source.sourceId);
+
+    if (source.type === TICKET_SOURCE_TYPES.CATEGORY) {
+      if (!sourceChannel || sourceChannel.type !== ChannelType.GuildCategory) {
+        if (channelsFetched) {
+          issues.push({
+            scope: `ticket_source:${source.sourceId}`,
+            code: "invalid_ticket_source",
+            missingPermissions: [],
+            labels: ["Configured Category Ticket Source is missing"],
+            sourceId: source.sourceId,
+          });
+        }
+        continue;
+      }
+
+      const missing = getMissingPermissions(sourceChannel.permissionsFor(botMember), [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.ManageChannels,
+        PermissionFlagsBits.ManageRoles,
+      ]);
+      if (missing.length) {
         issues.push({
-          scope: `ticket_source:${source.sourceId}`,
-          code: "invalid_ticket_source",
-          missingPermissions: [],
-          labels: ["Configured Ticket Source is missing"],
+          ...buildIssue(`ticket_source:${source.sourceId}`, missing),
           sourceId: source.sourceId,
+          sourceName: sourceChannel.name,
         });
       }
       continue;
     }
 
-    const missing = getMissingPermissions(category.permissionsFor(botMember), [
-      PermissionFlagsBits.ViewChannel,
-      PermissionFlagsBits.SendMessages,
-      PermissionFlagsBits.ReadMessageHistory,
-      PermissionFlagsBits.ManageChannels,
-      PermissionFlagsBits.ManageRoles,
-    ]);
-    if (missing.length) {
-      issues.push({
-        ...buildIssue(`ticket_source:${source.sourceId}`, missing),
-        sourceId: source.sourceId,
-        sourceName: category.name,
-      });
+    if (source.type === TICKET_SOURCE_TYPES.THREAD_PARENT) {
+      if (!sourceChannel || !isThreadParentChannel(sourceChannel)) {
+        if (channelsFetched) {
+          issues.push({
+            scope: `ticket_source:${source.sourceId}`,
+            code: "invalid_thread_parent_source",
+            missingPermissions: [],
+            labels: ["Configured Thread Parent source is missing or no longer supports threads"],
+            sourceId: source.sourceId,
+          });
+        }
+        continue;
+      }
+
+      const missing = getMissingPermissions(
+        sourceChannel.permissionsFor(botMember),
+        THREAD_PARENT_REQUIRED_PERMISSIONS
+      );
+      if (missing.length) {
+        issues.push({
+          ...buildIssue(`ticket_source:${source.sourceId}`, missing),
+          sourceId: source.sourceId,
+          sourceName: sourceChannel.name,
+        });
+      }
     }
   }
 
@@ -228,9 +283,12 @@ async function preflightFullControlForGuild(guild, options = {}) {
         labels: [channelsFetched ? "Human Support escalation category is missing" : "Human Support escalation category could not be verified"],
       });
     } else {
+      const destinationRequired = hasCategorySources
+        ? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ManageChannels]
+        : [PermissionFlagsBits.ViewChannel];
       const destinationMissing = getMissingPermissions(
         destination.permissionsFor(botMember),
-        [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ManageChannels]
+        destinationRequired
       );
       if (destinationMissing.length) {
         issues.push({
@@ -291,26 +349,46 @@ async function getSetupPermissionIssues({
   await refreshGuildChannels(guild);
   const issues = [];
   const fullControl = isFullTicketControlEnabled(settings || {});
+  const hasCategorySources = sources.some((source) =>
+    source.type === TICKET_SOURCE_TYPES.CATEGORY && source.enabled !== false
+  );
 
   for (const source of sources) {
-    if (source.type !== TICKET_SOURCE_TYPES.CATEGORY) continue;
-    const category = guild.channels?.cache?.get?.(source.sourceId);
-    if (!category || category.type !== ChannelType.GuildCategory) continue;
+    if (source.enabled === false) continue;
+    const sourceChannel = guild.channels?.cache?.get?.(source.sourceId);
 
-    const required = [
-      PermissionFlagsBits.ViewChannel,
-      PermissionFlagsBits.SendMessages,
-      PermissionFlagsBits.ReadMessageHistory,
-    ];
-    if (fullControl) {
-      required.push(PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageRoles);
+    if (source.type === TICKET_SOURCE_TYPES.CATEGORY) {
+      if (!sourceChannel || sourceChannel.type !== ChannelType.GuildCategory) continue;
+
+      const required = [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+      ];
+      if (fullControl) {
+        required.push(PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageRoles);
+      }
+
+      const missing = getMissingPermissions(sourceChannel.permissionsFor(botMember), required);
+      if (missing.length) {
+        issues.push(
+          `Ticket source **${sourceChannel.name}** is missing: ${formatPermissionList(missing)}.`
+        );
+      }
+      continue;
     }
 
-    const missing = getMissingPermissions(category.permissionsFor(botMember), required);
-    if (missing.length) {
-      issues.push(
-        `Ticket source **${category.name}** is missing: ${formatPermissionList(missing)}.`
+    if (source.type === TICKET_SOURCE_TYPES.THREAD_PARENT) {
+      if (!sourceChannel || !isThreadParentChannel(sourceChannel)) continue;
+      const missing = getMissingPermissions(
+        sourceChannel.permissionsFor(botMember),
+        THREAD_PARENT_REQUIRED_PERMISSIONS
       );
+      if (missing.length) {
+        issues.push(
+          `Thread Parent **${sourceChannel.name}** is missing: ${formatPermissionList(missing)}.`
+        );
+      }
     }
   }
 
@@ -344,7 +422,7 @@ async function getSetupPermissionIssues({
     }
   }
 
-  if (fullControl) {
+  if (fullControl && hasCategorySources) {
     const guildMissing = getMissingPermissions(botMember.permissions, [
       PermissionFlagsBits.ManageChannels,
       PermissionFlagsBits.ManageRoles,
