@@ -53,9 +53,9 @@ function getTicketControlAction(interaction) {
 
 async function getHumanSupportAvailability(guild, options = {}) {
   const client = options.client || prisma;
-  await Promise.all([
-    guild.roles.fetch().catch(() => null),
-    guild.channels.fetch().catch(() => null),
+  const [rolesFetched, channelsFetched] = await Promise.all([
+    guild.roles.fetch().then(() => true).catch(() => false),
+    guild.channels.fetch().then(() => true).catch(() => false),
   ]);
 
   const config = await client.guildConfig.findUnique({
@@ -68,24 +68,53 @@ async function getHumanSupportAvailability(guild, options = {}) {
   }
 
   const category = guild.channels.cache.get(config.escalationCategoryId);
-  if (!category || category.type !== ChannelType.GuildCategory) {
+  if (channelsFetched && (!category || category.type !== ChannelType.GuildCategory)) {
     return { available: false, code: "invalid_escalation_category" };
+  }
+  if (!category || category.type !== ChannelType.GuildCategory) {
+    return { available: false, code: "escalation_category_unavailable" };
   }
 
   const routes = await client.adminRoute.findMany({
     where: { guildId: guild.id, enabled: true },
-    select: { roleId: true },
+    select: { id: true, roleId: true },
     take: 25,
   });
 
-  const hasValidRoute = routes.some(
-    ({ roleId }) => roleId !== guild.id && guild.roles.cache.has(roleId)
-  );
-  if (!hasValidRoute) {
-    return { available: false, code: "no_support_routes" };
+  const invalidRoutes = rolesFetched
+    ? routes.filter(({ roleId }) => roleId === guild.id || !guild.roles.cache.has(roleId))
+    : [];
+
+  if (invalidRoutes.length && typeof client.adminRoute.updateMany === "function") {
+    await client.adminRoute.updateMany({
+      where: {
+        guildId: guild.id,
+        id: { in: invalidRoutes.map(({ id }) => id).filter(Boolean) },
+        enabled: true,
+      },
+      data: { enabled: false },
+    }).catch(() => null);
   }
 
-  return { available: true, code: null };
+  const invalidRoleIds = new Set(invalidRoutes.map(({ roleId }) => roleId));
+  const hasValidRoute = routes.some(({ roleId }) =>
+    roleId !== guild.id &&
+    !invalidRoleIds.has(roleId) &&
+    (!rolesFetched || guild.roles.cache.has(roleId))
+  );
+  if (!hasValidRoute) {
+    return {
+      available: false,
+      code: "no_support_routes",
+      disabledMissingRoutes: invalidRoutes.length,
+    };
+  }
+
+  return {
+    available: true,
+    code: null,
+    disabledMissingRoutes: invalidRoutes.length,
+  };
 }
 
 async function hasConfiguredSupportRoute(guild, options = {}) {
@@ -101,7 +130,11 @@ function getHumanSupportUnavailableMessage(interaction, code) {
     return userMessage;
   }
 
-  if (code === "missing_escalation_category" || code === "invalid_escalation_category") {
+  if (
+    code === "missing_escalation_category" ||
+    code === "invalid_escalation_category" ||
+    code === "escalation_category_unavailable"
+  ) {
     return `${userMessage}\n\nAdministrator note: open \`/pixy-setup\` and repair the Human Support escalation category.`;
   }
 
