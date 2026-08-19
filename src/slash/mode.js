@@ -13,6 +13,9 @@ const {
   getTicketOperatingModePreferences,
   resolveTicketOperatingMode,
 } = require("../features/ticketOperatingMode");
+const {
+  preflightFullControlForGuild,
+} = require("../utils/tickets/humanSupportPermissions");
 
 const EPHEMERAL = 64;
 
@@ -38,6 +41,19 @@ function describeMode(mode) {
     "This server has a mixed set of ticket-action preferences.",
     "Use `/pixy-settings` to adjust Close, Rename, and Escalation individually, or set a preset with this command.",
   ].join("\n");
+}
+
+function formatPreflightIssues(preflight) {
+  const lines = [];
+  for (const issue of preflight?.issues || []) {
+    if (issue.sourceName) {
+      lines.push(`• **${issue.sourceName}**: ${issue.labels.join(", ") || issue.code || "permission check failed"}`);
+      continue;
+    }
+    const scope = issue.scope === "server" ? "Server permissions" : issue.scope || "Pixy";
+    lines.push(`• **${scope}**: ${issue.labels.join(", ") || issue.code || "permission check failed"}`);
+  }
+  return lines.join("\n") || "• Pixy could not verify the permissions required for Full Ticket Control.";
 }
 
 module.exports = {
@@ -79,6 +95,24 @@ module.exports = {
         flags: EPHEMERAL,
       });
       return;
+    }
+
+    if (requestedMode === TICKET_OPERATING_MODES.FULL) {
+      const preflight = await preflightFullControlForGuild(interaction.guild);
+      if (!preflight.ok) {
+        await interaction.reply({
+          content: [
+            "Full Ticket Control was **not enabled** because Pixy is missing required permissions.",
+            "",
+            formatPreflightIssues(preflight),
+            "",
+            "Smart Overlay can keep working without these destructive permissions. Fix the items above, then enable Full Ticket Control again.",
+          ].join("\n"),
+          flags: EPHEMERAL,
+          allowedMentions: { parse: [] },
+        });
+        return;
+      }
     }
 
     await prisma.guildSetting.update({
