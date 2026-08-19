@@ -227,7 +227,7 @@ function pageMenu(userId) {
       },
       {
         label: "Excluded Tickets",
-        description: "Ticket channels Pixy should ignore",
+        description: "Ticket channels or threads Pixy should ignore",
         value: PAGES.EXCLUDED,
         emoji: "🚫",
       },
@@ -328,6 +328,7 @@ async function renderBehavior(guild, userId, notice = null) {
       "",
       "**Smart Overlay** keeps Pixy away from the ticket lifecycle: Close and Rename stay off. Human Escalation can stay enabled or disabled independently.",
       "**Full Ticket Control** enables Close, Rename, and Escalation only after Pixy passes its permission preflight.",
+      "**Thread tickets always use Smart Overlay** for lifecycle safety, even when channel tickets use Full Ticket Control.",
     ].join("\n"))
     .addFields(
       { name: "Operating Mode", value: `**${modeLabel(mode)}**`, inline: true },
@@ -698,18 +699,27 @@ function allowedTermModal(userId) {
 }
 
 function formatTicketSources(sources) {
-  const categories = sources
-    .filter((source) => source.type === "category" && source.enabled !== false)
-    .map((source) => `<#${source.sourceId}>`);
-  return categories.length ? categories.join(", ") : "No active Category sources";
+  const active = sources.filter((source) => source.enabled !== false);
+  if (!active.length) return "No active Ticket Sources";
+  return active
+    .slice(0, 20)
+    .map((source) =>
+      `${source.type === "thread_parent" ? "Thread Parent" : "Category"}: <#${source.sourceId}>`
+    )
+    .join("\n");
 }
 
 function excludedAddMenu(userId) {
   return new ActionRowBuilder().addComponents(
     new ChannelSelectMenuBuilder()
       .setCustomId(scoped(PREFIX.EXCLUDED_ADD, userId))
-      .setPlaceholder("Choose a ticket channel to exclude...")
-      .setChannelTypes(ChannelType.GuildText)
+      .setPlaceholder("Choose a ticket channel or thread to exclude...")
+      .setChannelTypes(
+        ChannelType.GuildText,
+        ChannelType.AnnouncementThread,
+        ChannelType.PublicThread,
+        ChannelType.PrivateThread
+      )
       .setMinValues(1)
       .setMaxValues(1)
   );
@@ -753,23 +763,26 @@ async function renderExcluded(guild, userId, notice = null) {
     listExcludedTickets(guildId, { limit: EXCLUDED_PREVIEW_LIMIT }),
     prisma.guildIgnoredChannel.count({ where: { guildId } }),
   ]);
-  await guild.channels.fetch().catch(() => null);
+  await Promise.all([
+    guild.channels.fetch().catch(() => null),
+    guild.channels.fetchActiveThreads?.().catch(() => null),
+  ]);
 
   const embed = new EmbedBuilder()
     .setTitle("Excluded Tickets")
     .setColor(0x99aab5)
     .setDescription([
-      "Excluded ticket channels are ignored by Pixy even when they are inside a configured Ticket Source.",
-      "Removing an exclusion immediately asks Pixy to reconcile the channel and reactivate it if it is still a valid ticket.",
+      "Excluded ticket channels or threads are ignored by Pixy even when they are inside a configured Ticket Source.",
+      "Removing an exclusion immediately asks Pixy to reconcile that ticket surface and reactivate it if it is still valid.",
     ].join("\n"))
     .addFields(
       { name: "Configured Ticket Sources", value: String(sources.length), inline: true },
       { name: "Excluded", value: String(total), inline: true },
-      { name: "Current Category Sources", value: formatTicketSources(sources), inline: false }
+      { name: "Current Ticket Sources", value: formatTicketSources(sources), inline: false }
     );
 
   if (!entries.length) {
-    embed.addFields({ name: "Excluded List", value: "No ticket channels are currently excluded." });
+    embed.addFields({ name: "Excluded List", value: "No ticket channels or threads are currently excluded." });
   } else {
     embed.addFields({
       name: total > entries.length ? `First ${entries.length} Exclusions` : "Excluded List",
@@ -835,15 +848,15 @@ async function finishExclude(interaction, userId, channelId, reason) {
 
   let notice;
   if (result.ok) {
-    notice = `<#${channelId}> is now excluded. Pixy will not read or reply in it until the exclusion is removed.`;
+    notice = `<#${channelId}> is now excluded. Pixy will not read or reply there until the exclusion is removed.`;
   } else if (result.code === "already_excluded") {
     notice = `<#${channelId}> is already excluded.`;
   } else if (result.code === "outside_ticket_sources") {
-    notice = "That channel is not inside any configured Pixy Ticket Source.";
+    notice = "That channel or thread is not inside any configured Pixy Ticket Source.";
   } else if (result.code === "ticket_sources_not_configured") {
     notice = "Configure Ticket Sources in `/pixy-setup` first.";
   } else {
-    notice = `Pixy could not exclude that channel: ${result.code || "unknown_error"}.`;
+    notice = `Pixy could not exclude that ticket: ${result.code || "unknown_error"}.`;
   }
 
   await editPanel(interaction, await renderExcluded(interaction.guild, userId, notice));
@@ -921,8 +934,6 @@ const command = {
         await deferUpdate(interaction);
         const result = await toggleBehaviorField(interaction.guild, field, {
           discordClient: interaction.client,
-          // interactionCreate refreshes open controls for the legacy-compatible
-          // settings_toggle prefix after this handler succeeds.
           skipRefresh: true,
         });
         const feature = BEHAVIOR_FEATURES.find((item) => item.field === field);
@@ -974,15 +985,15 @@ const command = {
         if (!validation.ok) {
           const messages = {
             ticket_sources_not_configured: "Configure Ticket Sources in `/pixy-setup` first.",
-            invalid_ticket_channel: "That ticket channel no longer exists.",
-            outside_ticket_sources: "That channel is not inside any configured Pixy Ticket Source.",
+            invalid_ticket_channel: "That ticket channel or thread no longer exists.",
+            outside_ticket_sources: "That channel or thread is not inside any configured Pixy Ticket Source.",
           };
           await editPanel(
             interaction,
             await renderExcluded(
               interaction.guild,
               userId,
-              messages[validation.code] || `That channel cannot be excluded: ${validation.code}.`
+              messages[validation.code] || `That ticket cannot be excluded: ${validation.code}.`
             )
           );
           return;
@@ -1030,8 +1041,8 @@ const command = {
           : result.reactivated
             ? `<#${channelId}> is no longer excluded and was reactivated for Pixy.`
             : result.code === "channel_missing"
-              ? `The exclusion was removed, but the channel no longer exists.`
-              : `The exclusion was removed, but the channel was not reactivated because it is no longer a valid Pixy ticket.`;
+              ? `The exclusion was removed, but the ticket channel or thread no longer exists.`
+              : `The exclusion was removed, but the ticket was not reactivated because it is no longer a valid Pixy ticket.`;
         await editPanel(interaction, await renderExcluded(interaction.guild, userId, notice));
       },
     },
