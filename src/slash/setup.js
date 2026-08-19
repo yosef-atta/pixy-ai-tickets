@@ -12,6 +12,12 @@ const {
   refreshOpenTicketControlsAfterBillingMutation,
 } = require("../billing/ticketControlRefresh");
 const { prisma } = require("../config/prisma");
+const {
+  replaceCategoryTicketSources,
+} = require("../config/ticketSources");
+const {
+  reconcileGuildTicketChannels,
+} = require("../tickets/ticketChannelLifecycle");
 
 const EPHEMERAL = 64;
 const SELECT_EXISTING = "setup_select_category_existing:";
@@ -40,7 +46,7 @@ function categoryPayload(userId, category) {
     content: [
       category ? `Current ticket category: **${category.name}**` : "Ticket category is not configured yet.",
       "",
-      "Choose where Pixy should create ticket channels:",
+      "Choose the category where your current ticket system creates ticket channels:",
     ].join("\n"),
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`${SELECT_EXISTING}${userId}`).setLabel("Select existing category").setStyle(ButtonStyle.Primary),
@@ -51,7 +57,7 @@ function categoryPayload(userId, category) {
 
 function categorySelectPayload(userId) {
   return {
-    content: "Choose the category where ticket channels are created:",
+    content: "Choose the category where your ticket system creates ticket channels:",
     components: [new ActionRowBuilder().addComponents(
       new ChannelSelectMenuBuilder()
         .setCustomId(`${CATEGORY_SELECT}${userId}`)
@@ -63,11 +69,17 @@ function categorySelectPayload(userId) {
 
 async function saveCategory(guildId, categoryId, options = {}) {
   const client = options.client || prisma;
-  return client.guildConfig.upsert({
+  const config = await client.guildConfig.upsert({
     where: { guildId },
     create: { guildId, ticketCategoryId: categoryId, enabled: true, maxLearnedItems: 50 },
     update: { ticketCategoryId: categoryId, enabled: true },
   });
+
+  if (client.ticketSource?.deleteMany && client.ticketSource?.upsert) {
+    await replaceCategoryTicketSources(guildId, [categoryId], { client });
+  }
+
+  return config;
 }
 
 async function saveCategoryAndStartTrial(guildId, categoryId, options = {}) {
@@ -75,9 +87,19 @@ async function saveCategoryAndStartTrial(guildId, categoryId, options = {}) {
   const startTrial = options.startTrial || startTrialOnce;
   const refreshControls =
     options.refreshControls || refreshOpenTicketControlsAfterBillingMutation;
+  const reconcileTickets = options.reconcileTickets || reconcileGuildTicketChannels;
   const config = await saveCategory(guildId, categoryId, { client });
 
   await startTrial(guildId, { client });
+
+  if (options.guild) {
+    await reconcileTickets(options.guild, {
+      client,
+      ensureControls: true,
+    }).catch((error) => {
+      console.error("Failed to reconcile existing tickets after setup:", error);
+    });
+  }
 
   if (options.guild || options.discordClient) {
     await refreshControls(guildId, {
@@ -153,7 +175,7 @@ const command = {
             discordClient: interaction.client,
           }
         );
-        await interaction.editReply({ content: `Ticket category saved as **${category.name}**. Configure the Groq key and features with /pixy-settings.`, components: [] });
+        await interaction.editReply({ content: `Ticket category saved as **${category.name}**. Existing tickets in it were reconciled. Configure the Groq key and features with /pixy-settings.`, components: [] });
       },
     },
   ],
@@ -180,7 +202,7 @@ const command = {
             discordClient: interaction.client,
           }
         );
-        await interaction.editReply({ content: `Ticket category saved as **${category.name}**. Configure the Groq key and features with /pixy-settings.`, components: [] });
+        await interaction.editReply({ content: `Ticket category saved as **${category.name}**. Existing tickets in it were reconciled. Configure the Groq key and features with /pixy-settings.`, components: [] });
       },
     },
   ],
