@@ -23,6 +23,7 @@ function createGuild() {
     ),
   };
   const cache = new Map();
+  const roleCache = new Map();
   return {
     id: "guild-1",
     members: {
@@ -35,6 +36,12 @@ function createGuild() {
       cache,
       async fetch() {
         return cache;
+      },
+    },
+    roles: {
+      cache: roleCache,
+      async fetch() {
+        return roleCache;
       },
     },
   };
@@ -99,4 +106,42 @@ test("Full Control guild preflight accepts valid ticket and escalation categorie
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.issues, []);
+});
+
+test("production-capable Full Control preflight requires at least one valid Human Support role", async () => {
+  const guild = createGuild();
+  const ticketCategory = category("ticket-category", "support");
+  const escalationCategory = category("escalation-category", "human-support");
+  guild.channels.cache.set(ticketCategory.id, ticketCategory);
+  guild.channels.cache.set(escalationCategory.id, escalationCategory);
+
+  let routes = [];
+  const client = {
+    guildConfig: {
+      async findUnique() {
+        return { escalationCategoryId: escalationCategory.id };
+      },
+    },
+    adminRoute: {
+      async findMany() {
+        return routes;
+      },
+    },
+  };
+
+  const missing = await preflightFullControlForGuild(guild, {
+    client,
+    sources: [{ type: "category", sourceId: ticketCategory.id }],
+  });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.issues.some((issue) => issue.code === "missing_support_routes"));
+
+  guild.roles.cache.set("role-1", { id: "role-1", name: "Support" });
+  routes = [{ roleId: "role-1" }];
+  const valid = await preflightFullControlForGuild(guild, {
+    client,
+    sources: [{ type: "category", sourceId: ticketCategory.id }],
+  });
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.issues, []);
 });
