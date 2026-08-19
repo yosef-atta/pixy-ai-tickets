@@ -1,5 +1,7 @@
 const {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   EmbedBuilder,
   PermissionFlagsBits,
@@ -8,7 +10,7 @@ const {
 
 const core = require("../setup/setupCommandCore");
 const { prisma } = require("../config/prisma");
-const { SETUP_STEPS } = require("../config/productDefaults");
+const { SETUP_STEPS, TICKET_SOURCE_TYPES } = require("../config/productDefaults");
 const { getOrCreateSetupState } = require("../config/setupState");
 const {
   listAiProviders,
@@ -21,12 +23,23 @@ const {
   createOrFindEscalationCategory,
   listSetupTicketSources,
   moveSetupToAiProvider,
+  validateCategoryIds,
+  validateThreadParentIds,
 } = require("../setup/setupService");
+const {
+  SETUP_REQUIRED_PERMISSIONS,
+  checkSetupPermissions,
+  prepareHumanSupportCategoryAccess,
+  prepareHumanSupportNotificationAccess,
+  prepareTicketSourceAccess,
+} = require("../setup/setupPermissionGate");
 
 const EPHEMERAL = 64;
 const { MODE, PREFIX } = core;
+const PERMISSION_RECHECK_PREFIX = "setup10_permissions_recheck:";
 
 const scoped = (prefix, mode, userId) => `${prefix}${mode}:${userId}`;
+const permissionRecheckId = (userId) => `${PERMISSION_RECHECK_PREFIX}${userId}`;
 
 async function assertOwner(interaction, userId) {
   const allowed =
@@ -66,83 +79,6 @@ async function getCategory(guild, categoryId) {
   if (cached?.type === ChannelType.GuildCategory) return cached;
   const fetched = await guild.channels?.fetch?.(categoryId).catch(() => null);
   return fetched?.type === ChannelType.GuildCategory ? fetched : null;
-}
-
-function uniqueLabels(values = []) {
-  return [...new Set(
-    values
-      .map((label) => String(label || "").trim())
-      .filter(Boolean)
-  )];
-}
-
-function formatNotificationSetupFailure(notification) {
-  const code = String(notification?.code || "");
-  const labels = uniqueLabels(notification?.missingPermissionLabels || []);
-  const baseMissing = uniqueLabels(notification?.missingBasePermissionLabels || []);
-  const overwriteBlocked = uniqueLabels(notification?.blockedByOverwritePermissionLabels || []);
-
-  if (code === "missing_manage_channels_permission") {
-    return [
-      "Pixy needs **Manage Channels** to create or repair the Human Support notification channel.",
-      "Grant it to the bot role, then press **Create/Repair Notification Channel** again.",
-    ].join(" ");
-  }
-
-  if (code === "missing_notification_channel_permissions" && labels.length) {
-    if (labels.includes("View Channel")) {
-      if (overwriteBlocked.includes("View Channel")) {
-        return [
-          "Pixy's bot role already has **View Channel**, but the Human Support category or notification-channel overrides are still blocking effective access.",
-          "Open the parent category or notification channel permissions, add/select Pixy's bot role, set **View Channel** to **Allow**, then press **Create/Repair Notification Channel** again.",
-        ].join(" ");
-      }
-
-      return [
-        "Pixy is still missing **View Channel** for the Human Support notification channel.",
-        "**View Channel** lets Pixy access the channel where Human Support alerts are posted.",
-        "Grant it to the bot role, or explicitly Allow it in the category/channel overrides, then press **Create/Repair Notification Channel** again.",
-      ].join(" ");
-    }
-
-    if (labels.includes("Send Messages")) {
-      const sendSource = overwriteBlocked.includes("Send Messages")
-        ? "Pixy's bot role already has **Send Messages**, but the Human Support category or notification-channel overrides are blocking it. Set **Send Messages** to **Allow** for Pixy's role there."
-        : "Grant **Send Messages** to Pixy's bot role, or explicitly Allow it in the Human Support category/channel overrides.";
-
-      return [
-        "Pixy now needs **Send Messages** in the Human Support notification channel.",
-        "**Send Messages** lets Pixy post escalation alerts there.",
-        sendSource,
-        "If you use ticket **Threads**, also enable **Send Messages in Threads**. It is not needed for this notification channel, but it is required for Pixy to reply inside Thread tickets.",
-        "Then press **Create/Repair Notification Channel** again.",
-      ].join(" ");
-    }
-
-    const sourceHint = baseMissing.length
-      ? "Grant the missing permission to Pixy's bot role."
-      : overwriteBlocked.length
-        ? "The bot role has the permission, but a category/channel override is blocking it."
-        : "Grant the missing permission to the bot role or category/channel overrides.";
-
-    return [
-      `Pixy is still missing **${labels.join("** and **")}** in the Human Support notification channel.`,
-      sourceHint,
-      "Then press **Create/Repair Notification Channel** again.",
-    ].join(" ");
-  }
-
-  if (code === "notification_channel_create_failed") {
-    return "Discord rejected the notification channel creation. Check Pixy's **Manage Channels** permission and any category permission overrides, then try Repair again.";
-  }
-
-  if (code === "missing_escalation_category") {
-    return "Choose a Human Support escalation category before creating the notification channel.";
-  }
-
-  return code
-    ? `Pixy could not prepare the Human Support notification channel (${code}).`
-    : "Pixy could not prepare the Human Support notification channel.";
 }
 
 function orderedProviders(providers = listAiProviders()) {
@@ -210,24 +146,184 @@ async function renderOnboardingAiProvider(guildId, userId, notice = null) {
   return buildInitialProviderChoice(userId, notice);
 }
 
+function renderPermissionGateFromStatus(status, userId, notice = null) {
+  const missing = status?.missing || SETUP_REQUIRED_PERMISSIONS;
+  const missingText = missing.length
+    ? missing.map(({ label, reason }) => `• **${label}** — ${reason}`).join("\n")
+    : "No permissions are missing.";
+
+  const embed = new EmbedBuilder()
+    .setTitle("Pixy Setup — Permission Check")
+    .setDescription([
+      "Before Ticket Sources, Pixy checks the server-level permissions needed for the full feature set once.",
+      "This avoids stopping later in AI, Human Support, or Full Ticket Control to ask for permissions one by one.",
+      "",
+      "Grant the missing permissions to Pixy's bot role, then press **Recheck Permissions**.",
+    ].join("\n"))
+    .addFields(
+      {
+        name: `Missing Permissions — ${missing.length}`,
+        value: missingText.slice(0, 1024),
+        inline: false,
+      },
+      {
+        name: "Full Pixy Permission Set",
+        value: SETUP_REQUIRED_PERMISSIONS.map(({ label }) => `• ${label}`).join("\n"),
+        inline: false,
+      }
+    );
+
+  return {
+    content: notice,
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(permissionRecheckId(userId))
+        .setLabel("Recheck Permissions")
+        .setStyle(ButtonStyle.Primary)
+    )],
+  };
+}
+
+async function renderPostPermissionStep(guild, userId, state, notice = null) {
+  if (state.lastStep === SETUP_STEPS.AI_PROVIDER) {
+    return renderOnboardingAiProvider(guild.id, userId, notice);
+  }
+  if (state.lastStep === SETUP_STEPS.HUMAN_SUPPORT) {
+    return core.renderHumanSupport(guild, userId, MODE.ONBOARD, notice);
+  }
+  return core.renderOnboardingTicketSources(guild, userId, notice);
+}
+
+async function renderPermissionGateOrCurrentStep(guild, userId, state, notice = null) {
+  const status = await checkSetupPermissions(guild);
+  if (!status.ok) {
+    return renderPermissionGateFromStatus(status, userId, notice);
+  }
+
+  return renderPostPermissionStep(
+    guild,
+    userId,
+    state,
+    notice || (state.lastStep === SETUP_STEPS.TICKET_SOURCES
+      ? "Permissions ready — Pixy can use the full feature set."
+      : null)
+  );
+}
+
+function humanSupportFailureNotice() {
+  return [
+    "Pixy could not prepare that Human Support location automatically.",
+    "The upfront permission check already passed, so this is usually caused by an unusual category/channel override or Discord refusing the overwrite update.",
+    "Try another category or use Pixy's automatically created Human Support category.",
+  ].join(" ");
+}
+
+async function prepareHumanSupportResources(guild, category) {
+  const categoryAccess = await prepareHumanSupportCategoryAccess(guild, category);
+  if (!categoryAccess.ok) {
+    return { ok: false, code: categoryAccess.code, categoryAccess };
+  }
+
+  let configured = await configureEscalationCategory(guild, category.id);
+  if (configured.notification.ok) {
+    return { ok: true, configured, categoryAccess };
+  }
+
+  const notificationChannel = configured.notification.channel || null;
+  if (notificationChannel) {
+    const notificationAccess = await prepareHumanSupportNotificationAccess(
+      notificationChannel,
+      categoryAccess.member
+    );
+    if (notificationAccess.ok) {
+      configured = await configureEscalationCategory(guild, category.id);
+    }
+  }
+
+  return {
+    ok: configured.notification.ok,
+    code: configured.notification.code || "human_support_provision_failed",
+    configured,
+    categoryAccess,
+  };
+}
+
 const originalExecute = core.execute.bind(core);
 core.execute = async function execute(interaction) {
   const state = await getOrCreateSetupState(interaction.guild.id);
-  if (!state.completedAt && state.lastStep === SETUP_STEPS.AI_PROVIDER) {
-    const payload = await renderOnboardingAiProvider(
-      interaction.guild.id,
-      interaction.user.id
-    );
-    await interaction.reply({
-      ...payload,
-      flags: EPHEMERAL,
-      allowedMentions: { parse: [] },
-    });
-    return;
+
+  if (!state.completedAt) {
+    const status = await checkSetupPermissions(interaction.guild);
+    if (!status.ok) {
+      const payload = renderPermissionGateFromStatus(status, interaction.user.id);
+      await interaction.reply({
+        ...payload,
+        flags: EPHEMERAL,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+
+    if (state.lastStep === SETUP_STEPS.TICKET_SOURCES) {
+      const payload = await core.renderOnboardingTicketSources(
+        interaction.guild,
+        interaction.user.id,
+        "Permissions ready — Pixy can use the full feature set."
+      );
+      await interaction.reply({
+        ...payload,
+        flags: EPHEMERAL,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+
+    if (state.lastStep === SETUP_STEPS.AI_PROVIDER) {
+      const payload = await renderOnboardingAiProvider(
+        interaction.guild.id,
+        interaction.user.id
+      );
+      await interaction.reply({
+        ...payload,
+        flags: EPHEMERAL,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+
+    if (state.lastStep === SETUP_STEPS.HUMAN_SUPPORT) {
+      const config = await prisma.guildConfig.findUnique({
+        where: { guildId: interaction.guild.id },
+        select: { escalationCategoryId: true },
+      });
+      if (config?.escalationCategoryId) {
+        const category = await getCategory(interaction.guild, config.escalationCategoryId);
+        if (category) await prepareHumanSupportResources(interaction.guild, category);
+      }
+    }
   }
 
   return originalExecute(interaction);
 };
+
+core.buttonHandlers.push({
+  customIdPrefix: PERMISSION_RECHECK_PREFIX,
+  async execute(interaction) {
+    const userId = String(interaction.customId || "").slice(PERMISSION_RECHECK_PREFIX.length);
+    if (!(await assertOwner(interaction, userId))) return;
+    await deferUpdate(interaction);
+
+    const state = await getOrCreateSetupState(interaction.guild.id);
+    const payload = await renderPermissionGateOrCurrentStep(
+      interaction.guild,
+      userId,
+      state,
+      null
+    );
+    await editPanel(interaction, payload);
+  },
+});
 
 const ticketNextHandler = core.buttonHandlers.find(
   (handler) => handler.customIdPrefix === PREFIX.TICKET_NEXT
@@ -240,6 +336,19 @@ ticketNextHandler.execute = async function executeTicketNext(interaction) {
   const { userId } = core.parseScoped(interaction.customId, PREFIX.TICKET_NEXT);
   if (!(await assertOwner(interaction, userId))) return;
   await deferUpdate(interaction);
+
+  const permissionStatus = await checkSetupPermissions(interaction.guild);
+  if (!permissionStatus.ok) {
+    await editPanel(
+      interaction,
+      renderPermissionGateFromStatus(
+        permissionStatus,
+        userId,
+        "Pixy's permissions changed before setup could continue."
+      )
+    );
+    return;
+  }
 
   const sources = await listSetupTicketSources(interaction.guild.id);
   if (!sources.length) {
@@ -264,6 +373,57 @@ ticketNextHandler.execute = async function executeTicketNext(interaction) {
     )
   );
 };
+
+function wrapTicketSourceAccess(handler, type) {
+  if (!handler) throw new Error(`Pixy setup ${type} source handler is missing.`);
+  const original = handler.execute.bind(handler);
+
+  handler.execute = async function executeWithAccess(interaction) {
+    const prefix = type === TICKET_SOURCE_TYPES.THREAD_PARENT
+      ? PREFIX.TICKET_THREAD_SELECT
+      : PREFIX.TICKET_SELECT;
+    const { mode, userId } = core.parseScoped(interaction.customId, prefix);
+    if (!(await assertOwner(interaction, userId))) return;
+    await deferUpdate(interaction);
+
+    const permissionStatus = await checkSetupPermissions(interaction.guild);
+    if (!permissionStatus.ok && mode === MODE.ONBOARD) {
+      await editPanel(
+        interaction,
+        renderPermissionGateFromStatus(permissionStatus, userId)
+      );
+      return;
+    }
+
+    const selectedIds = interaction.values || [];
+    const channels = type === TICKET_SOURCE_TYPES.THREAD_PARENT
+      ? await validateThreadParentIds(interaction.guild, selectedIds)
+      : await validateCategoryIds(interaction.guild, selectedIds);
+
+    if (selectedIds.length && channels.length === selectedIds.length) {
+      const access = await prepareTicketSourceAccess(interaction.guild, channels, type);
+      if (!access.ok) {
+        const message = "Pixy could not prepare access to one or more selected Ticket Sources. Choose a source where Pixy can manage its channel permissions, or restore the full Pixy permission set and try again.";
+        const payload = mode === MODE.ONBOARD
+          ? await core.renderOnboardingTicketSources(interaction.guild, userId, message)
+          : await core.renderTicketSourceManager(interaction.guild, userId, message);
+        await editPanel(interaction, payload);
+        return;
+      }
+    }
+
+    return original(interaction);
+  };
+}
+
+wrapTicketSourceAccess(
+  core.selectMenuHandlers.find((handler) => handler.customIdPrefix === PREFIX.TICKET_SELECT),
+  TICKET_SOURCE_TYPES.CATEGORY
+);
+wrapTicketSourceAccess(
+  core.selectMenuHandlers.find((handler) => handler.customIdPrefix === PREFIX.TICKET_THREAD_SELECT),
+  TICKET_SOURCE_TYPES.THREAD_PARENT
+);
 
 const providerSelectHandler = core.selectMenuHandlers.find(
   (handler) => handler.customIdPrefix === PREFIX.AI_PROVIDER
@@ -310,20 +470,22 @@ humanCategoryCreateHandler.execute = async function executeHumanCategoryCreate(i
 
   const result = await createOrFindEscalationCategory(interaction.guild);
   if (!result.ok || !result.category) {
-    const notice = result.code === "missing_manage_channels_permission"
-      ? "Pixy needs **Manage Channels** to create the Human Support category. Grant it, then try again."
-      : "Pixy could not create the Human Support category automatically.";
     await editPanel(
       interaction,
-      await core.renderHumanSupport(interaction.guild, userId, mode, notice)
+      await core.renderHumanSupport(
+        interaction.guild,
+        userId,
+        mode,
+        "Pixy could not create the Human Support category automatically. Re-run `/pixy-setup` to verify the full permission set, then try again."
+      )
     );
     return;
   }
 
-  const configured = await configureEscalationCategory(interaction.guild, result.category.id);
-  const notice = configured.notification.ok
-    ? `Human Support category saved as **${result.category.name}**.`
-    : `Human Support category **${result.category.name}** is saved. ${formatNotificationSetupFailure(configured.notification)}`;
+  const prepared = await prepareHumanSupportResources(interaction.guild, result.category);
+  const notice = prepared.ok
+    ? `Human Support category **${result.category.name}** and its notification channel are ready.`
+    : humanSupportFailureNotice();
   await editPanel(
     interaction,
     await core.renderHumanSupport(interaction.guild, userId, mode, notice)
@@ -358,13 +520,24 @@ humanRetryHandler.execute = async function executeHumanNotificationRepair(intera
     return;
   }
 
-  const configured = await configureEscalationCategory(
-    interaction.guild,
-    config.escalationCategoryId
-  );
-  const notice = configured.notification.ok
-    ? "Human Support notification channel is ready."
-    : formatNotificationSetupFailure(configured.notification);
+  const category = await getCategory(interaction.guild, config.escalationCategoryId);
+  if (!category) {
+    await editPanel(
+      interaction,
+      await core.renderHumanSupport(
+        interaction.guild,
+        userId,
+        mode,
+        "That Human Support category no longer exists. Choose or create another one."
+      )
+    );
+    return;
+  }
+
+  const prepared = await prepareHumanSupportResources(interaction.guild, category);
+  const notice = prepared.ok
+    ? "Human Support resources are ready."
+    : humanSupportFailureNotice();
   await editPanel(
     interaction,
     await core.renderHumanSupport(interaction.guild, userId, mode, notice)
@@ -398,10 +571,10 @@ humanCategorySelectHandler.execute = async function executeHumanCategorySelect(i
     return;
   }
 
-  const configured = await configureEscalationCategory(interaction.guild, category.id);
-  const notice = configured.notification.ok
-    ? `Human Support category saved as **${category.name}**.`
-    : `Human Support category **${category.name}** is saved. ${formatNotificationSetupFailure(configured.notification)}`;
+  const prepared = await prepareHumanSupportResources(interaction.guild, category);
+  const notice = prepared.ok
+    ? `Human Support category **${category.name}** and its notification channel are ready.`
+    : humanSupportFailureNotice();
   await editPanel(
     interaction,
     await core.renderHumanSupport(interaction.guild, userId, mode, notice)
@@ -410,8 +583,11 @@ humanCategorySelectHandler.execute = async function executeHumanCategorySelect(i
 
 module.exports = Object.assign(core, {
   buildInitialProviderChoice,
-  formatNotificationSetupFailure,
   getSavedAiProviderRecord,
+  humanSupportFailureNotice,
   orderedProviders,
+  prepareHumanSupportResources,
   renderOnboardingAiProvider,
+  renderPermissionGateFromStatus,
+  renderPermissionGateOrCurrentStep,
 });
