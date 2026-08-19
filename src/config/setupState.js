@@ -83,6 +83,30 @@ async function inferSetupProgress(guildId, options = {}) {
   };
 }
 
+function resolveResumeStep(existing, inferredStep) {
+  if (inferredStep === SETUP_STEPS.TICKET_SOURCES) {
+    return SETUP_STEPS.TICKET_SOURCES;
+  }
+  if (inferredStep === SETUP_STEPS.AI_PROVIDER) {
+    return SETUP_STEPS.AI_PROVIDER;
+  }
+
+  // Once the AI credential is valid we deliberately keep an in-progress AI
+  // screen on AI_PROVIDER until the admin presses Next. That preserves the
+  // chance to review/change the model instead of auto-skipping the only
+  // intentional Next step when /pixy-setup is reopened.
+  if (existing?.lastStep === SETUP_STEPS.AI_PROVIDER) {
+    return SETUP_STEPS.AI_PROVIDER;
+  }
+  if (existing?.lastStep === SETUP_STEPS.HUMAN_SUPPORT) {
+    return SETUP_STEPS.HUMAN_SUPPORT;
+  }
+
+  // If configuration was created outside the new wizard, let the admin review
+  // the provider step once before advancing to optional human support.
+  return existing ? SETUP_STEPS.AI_PROVIDER : SETUP_STEPS.HUMAN_SUPPORT;
+}
+
 async function reconcileSetupState(guildId, options = {}) {
   const client = options.client || prisma;
   const normalizedGuildId = normalizeGuildId(guildId);
@@ -99,7 +123,7 @@ async function reconcileSetupState(guildId, options = {}) {
   const progress = await inferSetupProgress(normalizedGuildId, { client });
   const data = {
     setupVersion: CURRENT_SETUP_VERSION,
-    lastStep: progress.lastStep,
+    lastStep: resolveResumeStep(existing, progress.lastStep),
     completedAt: null,
   };
 
@@ -154,4 +178,5 @@ module.exports = {
   markSetupStep,
   normalizeGuildId,
   reconcileSetupState,
+  resolveResumeStep,
 };
