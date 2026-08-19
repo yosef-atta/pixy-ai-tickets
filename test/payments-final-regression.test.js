@@ -19,7 +19,7 @@ test("public and operator documentation describes implemented billing behavior",
     "^partner add <guild-id>",
     "30-day months",
     "365-day years",
-    "Groq usage",
+    "Groq, Google Gemini, and Mistral",
   ]) {
     assert.match(readme, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -35,15 +35,15 @@ test("public and operator documentation describes implemented billing behavior",
   }
 });
 
-test("clear and guild-removal code explicitly retain billing continuity", () => {
+test("reset and guild-removal code explicitly retain billing continuity", () => {
   const cleanup = read("src/data/guildOperationalCleanup.js");
-  const clear = read("src/slash/clear.js");
+  const reset = read("src/slash/reset.js");
   const guildDelete = read("src/events/guildDelete.js");
 
   assert.doesNotMatch(cleanup, /guildBilling\.delete/i);
   assert.doesNotMatch(cleanup, /billingEvent\.delete/i);
-  assert.match(clear, /billing audit records were retained/i);
-  assert.match(clear, /will not start another Trial/i);
+  assert.match(reset, /billing audit records were retained/i);
+  assert.match(reset, /will not start another Trial/i);
   assert.match(guildDelete, /billing continuity records were retained/i);
 });
 
@@ -53,7 +53,7 @@ test("public help, settings, and lock copy point administrators to billing", () 
   const entitlement = read("src/billing/entitlementService.js");
 
   assert.match(help, /Plans & Billing/);
-  assert.match(help, /Generic ticket AI replies/);
+  assert.match(help, /generic AI replies/i);
   assert.match(settings, /subscription-locked/);
   assert.match(settings, /\/pixy-billing/);
   assert.match(entitlement, /\/pixy-billing/);
