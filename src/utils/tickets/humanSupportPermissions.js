@@ -3,6 +3,7 @@ const {
   PermissionFlagsBits,
 } = require("discord.js");
 
+const { prisma } = require("../../config/prisma");
 const {
   listResolvedTicketSources,
 } = require("../../config/ticketSources");
@@ -118,6 +119,7 @@ async function preflightFullControlForTicket({
 }
 
 async function preflightFullControlForGuild(guild, options = {}) {
+  const client = options.client || prisma;
   const botMember = await getBotMember(guild);
   if (!botMember) {
     return {
@@ -134,9 +136,13 @@ async function preflightFullControlForGuild(guild, options = {}) {
   ]);
   if (guildMissing.length) issues.push(buildIssue("server", guildMissing));
 
-  const sources = options.sources || await listResolvedTicketSources(guild.id, {
-    client: options.client,
-  });
+  const [sources, config] = await Promise.all([
+    options.sources || listResolvedTicketSources(guild.id, { client }),
+    options.config || client.guildConfig.findUnique({
+      where: { guildId: guild.id },
+      select: { escalationCategoryId: true },
+    }),
+  ]);
   await guild.channels.fetch().catch(() => null);
 
   for (const source of sources) {
@@ -157,6 +163,37 @@ async function preflightFullControlForGuild(guild, options = {}) {
         sourceId: source.sourceId,
         sourceName: category.name,
       });
+    }
+  }
+
+  if (!config?.escalationCategoryId) {
+    issues.push({
+      scope: "escalation_category",
+      code: "missing_escalation_category",
+      missingPermissions: [],
+      labels: ["Human Support escalation category is not configured"],
+    });
+  } else {
+    const destination = guild.channels.cache.get(config.escalationCategoryId);
+    if (!destination || destination.type !== ChannelType.GuildCategory) {
+      issues.push({
+        scope: "escalation_category",
+        code: "invalid_escalation_category",
+        missingPermissions: [],
+        labels: ["Human Support escalation category is missing"],
+      });
+    } else {
+      const destinationMissing = getMissingPermissions(
+        destination.permissionsFor(botMember),
+        [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ManageChannels]
+      );
+      if (destinationMissing.length) {
+        issues.push({
+          ...buildIssue("escalation_category", destinationMissing),
+          sourceId: destination.id,
+          sourceName: destination.name,
+        });
+      }
     }
   }
 
