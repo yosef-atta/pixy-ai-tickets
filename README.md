@@ -32,7 +32,7 @@ Resetting Pixy, removing/reinviting the bot, or configuring it again does not cr
 - Multiple Ticket Sources per guild
 - Category sources for channel-based tickets
 - Thread Parent sources for ticket threads under text, announcement, forum, or media channels
-- Guild-scoped Q&A and free-form knowledge
+- Guild-scoped semantic Knowledge with Q&A facts, free-form topics, and Quick Import
 - Smart Overlay and Full Ticket Control operating modes
 - Validated close, rename, and human-escalation actions for supported channel tickets
 - Safe overlay handoff for Thread tickets
@@ -116,7 +116,19 @@ Full Ticket Control runs a guild permission/setup preflight before it can be ena
 
 ### Knowledge
 
-Admins can add, list, delete, or clear guild-specific Q&A and free-form entries. Existing knowledge can still be managed after expiry, but new additions and AI injection require Trial, Pro, or Partner entitlement.
+Knowledge is reusable AI context, **not an exact FAQ lookup table**. Q&A is simply one convenient way to teach Pixy a fact: the stored question is example wording, and a future user can ask the same idea in different words.
+
+For broader topics such as an advertising package, pricing plan, server policy, product rules, or eligibility details, a single **Free-form** item can hold the whole topic. For example, one `Gold Advertising Package` note can contain its price, duration, benefits, and rules, and Pixy can use that same note to answer multiple related questions.
+
+Admins can:
+
+- add a Q&A fact,
+- add a Free-form topic,
+- use **Quick Import** to paste several `Q:` / `A:` pairs at once (Arabic `س:` / `ج:` markers are also accepted),
+- list and delete individual entries,
+- clear the guild's Knowledge.
+
+Existing knowledge can still be managed after expiry, but new additions and AI injection require Trial, Pro, or Partner entitlement.
 
 ### Safety
 
