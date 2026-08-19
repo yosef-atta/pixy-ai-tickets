@@ -23,8 +23,9 @@ function describeMode(mode) {
   if (mode === TICKET_OPERATING_MODES.FULL) {
     return [
       "**Full Ticket Control**",
-      "Pixy can expose Close and Rename controls, and escalation may move/rename the ticket and adjust support-role access.",
-      "Use this when Pixy is intended to participate in the ticket lifecycle.",
+      "For channel-based tickets, Pixy can expose Close and Rename controls, and escalation may move/rename the ticket and adjust support-role access.",
+      "Thread tickets remain Smart Overlay surfaces: Pixy can help and hand off to humans, but it will not close, rename, move, or delete the thread.",
+      "Use this when Pixy is intended to participate in the lifecycle of channel-based tickets.",
     ].join("\n");
   }
 
@@ -40,6 +41,7 @@ function describeMode(mode) {
   return [
     "**Custom**",
     "This server has a mixed set of ticket-action preferences.",
+    "Thread tickets still use Smart Overlay for lifecycle safety.",
     "Use `/pixy-settings` to adjust Close, Rename, and Escalation individually, or set a preset with this command.",
   ].join("\n");
 }
