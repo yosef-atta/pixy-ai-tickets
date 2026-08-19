@@ -33,8 +33,8 @@ function createCredentialError(provider, credentialStatus) {
   const invalid = credentialStatus === "invalid";
   const error = new Error(
     invalid
-      ? `This server's ${providerDefinition.displayName} credential must be replaced in /pixy-settings.`
-      : `This server must configure a ${providerDefinition.displayName} credential in /pixy-settings.`
+      ? `This server's ${providerDefinition.displayName} credential must be replaced in /pixy-setup.`
+      : `This server must configure a ${providerDefinition.displayName} credential in /pixy-setup.`
   );
   error.code = providerDefinition.id === "groq"
     ? invalid
