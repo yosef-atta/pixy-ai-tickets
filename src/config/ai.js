@@ -4,9 +4,14 @@ const {
   isEncryptedCredential,
 } = require("../security/credentialEncryption");
 const { DEFAULT_GROQ_MODEL } = require("../ai/groqModels");
+const {
+  DEFAULT_AI_PROVIDER,
+  DEFAULT_GUILD_SETTINGS,
+  DEFAULT_MAX_ADMIN_ROUTES,
+} = require("./productDefaults");
 
 const defaultAiConfig = Object.freeze({
-  provider: "groq",
+  provider: DEFAULT_AI_PROVIDER,
   groq: Object.freeze({
     model: DEFAULT_GROQ_MODEL,
   }),
@@ -15,12 +20,12 @@ const defaultAiConfig = Object.freeze({
   replyCooldownMs: 3000,
   maxInputChars: 2500,
   recentMessagesLimit: 8,
-  agentActionsEnabled: true,
-  escalationEnabled: true,
-  maxAdminRoutesPerGuild: 10,
+  agentActionsEnabled: DEFAULT_GUILD_SETTINGS.agentActionsEnabled,
+  escalationEnabled: DEFAULT_GUILD_SETTINGS.escalationEnabled,
+  maxAdminRoutesPerGuild: DEFAULT_MAX_ADMIN_ROUTES,
   ticketCloseDeleteDelayMs: 2500,
   actionMaxReplyChars: 1000,
-  renameReviewEnabled: false,
+  renameReviewEnabled: DEFAULT_GUILD_SETTINGS.renameReviewEnabled,
   escalationNotificationChannelName: "pixy-notifications",
 });
 
@@ -47,11 +52,7 @@ async function getOrCreateGuildSetting(guildId) {
     return await prisma.guildSetting.create({
       data: {
         guildId: normalizedGuildId,
-        aiReplyEnabled: true,
-        closeTicketEnabled: false,
-        renameReviewEnabled: false,
-        escalationEnabled: true,
-        agentActionsEnabled: true,
+        ...DEFAULT_GUILD_SETTINGS,
       },
     });
   } catch (error) {
