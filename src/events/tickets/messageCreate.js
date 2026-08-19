@@ -17,6 +17,9 @@ const {
 const {
   refreshOpenTicketControlForChannel,
 } = require("../../billing/ticketControlRefresh");
+const {
+  reconcileTicketChannel,
+} = require("../../tickets/ticketChannelLifecycle");
 const { splitDiscordMessage } = require("../../utils/splitDiscordMessage");
 const { validateTicketAction } = require("../../utils/tickets/actions/ticketActionValidator");
 const { executeTicketAction } = require("../../utils/tickets/actions/ticketActionExecutor");
@@ -212,18 +215,16 @@ const messageCreateEvent = {
     try {
       if (shouldIgnoreMessage(message) || message.channel.type !== ChannelType.GuildText) return;
 
+      const lifecycle = await reconcileTicketChannel(message.channel);
+      if (!lifecycle.tracked) return;
+
       const channelId = message.channelId;
       const guildId = message.guild.id;
+      const config = lifecycle.eligibility?.config;
+      const ticket = lifecycle.ticket;
+      const entitlement = await loadGuildEntitlementState(guildId);
 
-      const [config, ticket, ignoredChannel, entitlement] = await Promise.all([
-        prisma.guildConfig.findUnique({ where: { guildId } }),
-        prisma.ticketChannel.findUnique({ where: { channelId } }),
-        prisma.guildIgnoredChannel.findUnique({
-          where: { guildId_channelId: { guildId, channelId } },
-        }),
-        loadGuildEntitlementState(guildId),
-      ]);
-      if (!config?.enabled || config.aiEnabled === false || !ticket || ticket.closed || ticket.aiEnabled === false || ignoredChannel) return;
+      if (!config?.enabled || config.aiEnabled === false || !ticket || ticket.closed || ticket.aiEnabled === false) return;
 
       await refreshControlsForPlanChange({
         message,
