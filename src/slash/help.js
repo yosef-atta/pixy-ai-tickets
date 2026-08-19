@@ -8,8 +8,6 @@ const {
 const { createStringSelectMenus } = require("../utils/selectMenuHelper");
 
 const EPHEMERAL = 64;
-const GROQ_KEYS_URL = "https://console.groq.com/keys";
-const GROQ_QUICKSTART_URL = "https://console.groq.com/docs/quickstart";
 
 const PREFIX = Object.freeze({
   NAV: "help_nav:",
@@ -43,7 +41,7 @@ const TOPICS = Object.freeze([
   },
   {
     label: "AI Provider",
-    description: "Connect Groq, validate the API key, and choose a model",
+    description: "Choose Groq, Google Gemini, or Mistral and connect an API key",
     value: PAGES.AI,
     emoji: "🤖",
   },
@@ -159,9 +157,9 @@ function quickStart(userId) {
       {
         name: "2. AI Provider",
         value: [
-          "Groq is the currently available provider.",
-          "Add the server's API key in `/pixy-setup`; Pixy validates it, encrypts it, and never displays the stored secret again.",
-          "The default model works immediately, or you can verify and choose another model before pressing Next.",
+          "Choose **Groq**, **Google Gemini**, or **Mistral**.",
+          "Add that server's provider API key in `/pixy-setup`; Pixy validates it, encrypts it, and never displays the stored secret again.",
+          "The provider default model works immediately, or you can verify and choose another model before pressing Next.",
         ].join("\n"),
       },
       {
@@ -214,39 +212,26 @@ function ai(userId) {
   const embed = new EmbedBuilder()
     .setTitle("🤖 AI Provider")
     .setColor(0xfee75c)
-    .setDescription("Pixy's provider architecture is extensible, but Groq is the provider currently exposed in production setup.")
+    .setDescription("Pixy currently supports three selectable providers: Groq, Google Gemini, and Mistral.")
     .addFields(
       {
-        name: "Connect Groq",
-        value: "Run `/pixy-setup` → **AI Provider**. Add the guild-owned Groq API key in the private modal. Provider credentials are part of core setup, not `/pixy-settings`.",
+        name: "Choose a provider",
+        value: "Run `/pixy-setup` → **AI Provider** and select **Groq**, **Google Gemini**, or **Mistral**. Switching providers clears the previous provider credential and model override so credentials cannot be reused across providers by mistake.",
       },
       {
         name: "Credential storage",
-        value: "Pixy validates the credential before saving it encrypted. The stored secret is never displayed back to users.",
+        value: "Add the selected provider's guild-owned API key in the private modal. Pixy validates it before saving it encrypted, and the stored secret is never displayed back to users.",
       },
       {
         name: "Model selection",
-        value: "The provider default is ready after a valid credential is saved. **Change Model** verifies a model against the connected account before saving the override.",
+        value: "Each provider has a default model. **Change Model** verifies a model against the connected provider account before saving the override.",
       },
       {
         name: "Usage",
-        value: "The guild supplies its own Groq credential and is responsible for the provider's usage limits and charges. Pixy does not provide a shared Groq quota.",
+        value: "The guild supplies its own provider credential and is responsible for that provider's usage limits and charges. Pixy does not provide a shared provider quota.",
       }
     );
-
-  const links = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setLabel("Groq API Keys")
-      .setEmoji("🔑")
-      .setStyle(ButtonStyle.Link)
-      .setURL(GROQ_KEYS_URL),
-    new ButtonBuilder()
-      .setLabel("Groq Quickstart")
-      .setEmoji("📖")
-      .setStyle(ButtonStyle.Link)
-      .setURL(GROQ_QUICKSTART_URL)
-  );
-  return panel(embed, userId, [links]);
+  return panel(embed, userId);
 }
 
 function billing(userId) {
@@ -376,7 +361,7 @@ function troubleshooting(userId) {
       },
       {
         name: "Provider credential or model fails validation",
-        value: "Open `/pixy-setup` → **AI Provider**, replace the credential if needed, then use the default model or verify another model available to that account.",
+        value: "Open `/pixy-setup` → **AI Provider**, confirm the correct provider is selected, replace its credential if needed, then use the default model or verify another model available to that account.",
       }
     );
   return panel(embed, userId);
