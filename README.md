@@ -41,7 +41,7 @@ Resetting Pixy, removing/reinviting the bot, or configuring it again does not cr
 - Ticket-level AI pause/resume controls
 - Per-ticket exclusions for tracked channels or threads
 - Built-in and guild-specific safety terms with allow exceptions
-- Provider-aware AI configuration with encrypted guild credentials
+- Selectable Groq, Google Gemini, and Mistral AI providers with encrypted guild credentials
 - Plan-aware controls and execution-time entitlement checks
 - Guild-isolated AI usage logs and operational reset
 - Manual Trial, Pro, and Partner billing with transactional audit records
@@ -61,15 +61,17 @@ A server can configure multiple Categories, multiple Thread Parents, or both. Th
 
 ### 2. AI Provider
 
-Groq is the provider currently exposed in production setup.
+Choose one of the providers exposed in setup:
 
-- The guild supplies its own Groq API key.
-- Pixy validates the credential before saving it encrypted.
-- The saved secret is never displayed back to users.
-- The provider default model is usable immediately after a valid credential is saved.
-- **Change Model** verifies an alternate model against the connected account before saving it.
+- **Groq**
+- **Google Gemini**
+- **Mistral**
 
-The provider layer is structured so additional providers can be added later without changing the ticket-system concept, but other hosted providers are not currently exposed to guilds.
+The guild supplies its own API key for the selected provider. Pixy validates the credential before saving it encrypted, and the saved secret is never displayed back to users.
+
+Each provider has a default model that is usable immediately after a valid credential is saved. **Change Model** verifies an alternate model against the connected provider account before saving it.
+
+Switching providers clears the previous provider credential and model override so a credential from one provider cannot accidentally be reused with another provider.
 
 ### 3. Human Support
 
@@ -262,7 +264,7 @@ The development command `npm run db:clear -- --confirm` is different: it clears 
 - discord.js 14
 - Prisma ORM 7
 - MySQL 8.4 locally and in production
-- Groq SDK as the currently exposed AI provider integration
+- Groq SDK for Groq plus native HTTPS integrations for Google Gemini and Mistral
 
 ## Environment variables
 
@@ -326,7 +328,7 @@ Run the automated suite against the dedicated test database before deployment:
 npm test
 ```
 
-See `docs/RELEASE_CHECKLIST.md` for the Phase 8 production smoke-test and rollout checklist.
+See `docs/RELEASE_CHECKLIST.md` for the production smoke-test and rollout checklist.
 
 ## Quick-start guides
 
