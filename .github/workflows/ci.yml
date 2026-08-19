@@ -55,4 +55,18 @@ jobs:
         run: npm run check
 
       - name: Full test suite
-        run: npm test
+        shell: bash
+        run: |
+          set +e
+          npm test > test-output.log 2>&1
+          status=$?
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            echo "Full test suite failed. Showing focused failure output:"
+            grep -E -B 2 -A 22 'not ok|failureType:|error:|# tests |# pass |# fail ' test-output.log || true
+            exit "$status"
+          fi
+
+          echo "Full test suite passed."
+          tail -n 12 test-output.log
