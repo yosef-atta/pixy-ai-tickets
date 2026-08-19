@@ -20,6 +20,9 @@ const OPERATIONAL_MODELS = [
   "guildIgnoredChannel",
   "guildBlockedTerm",
   "guildAllowedTerm",
+  "ticketSource",
+  "guildAiConfig",
+  "guildSetupState",
   "guildSetting",
   "guildConfig",
 ];
