@@ -11,6 +11,10 @@ const {
 const {
   getUnsafeTicketNameReason,
 } = require("./renameSafety");
+const {
+  isSupportedTicketChannel,
+  isThreadTicketChannel,
+} = require("../ticketSurface");
 
 function cleanSingleLine(value) {
   return String(value || "")
@@ -291,7 +295,7 @@ async function validateTicketAction({ actionRequest, message, ticket }) {
     };
   }
 
-  if (message.channel.type !== ChannelType.GuildText) {
+  if (!isSupportedTicketChannel(message.channel)) {
     return {
       ok: false,
       code: "invalid_channel_type",
@@ -309,6 +313,16 @@ async function validateTicketAction({ actionRequest, message, ticket }) {
     return {
       ok: false,
       code: "ticket_already_closed",
+    };
+  }
+
+  if (
+    isThreadTicketChannel(message.channel) &&
+    (action === TICKET_ACTIONS.CLOSE_TICKET || action === TICKET_ACTIONS.RENAME_TICKET)
+  ) {
+    return {
+      ok: false,
+      code: "thread_lifecycle_action_unsupported",
     };
   }
 
