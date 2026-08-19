@@ -116,6 +116,15 @@ async function findNotificationChannelInCategory(guild, categoryId) {
 async function getFreshBotMember(guild) {
   if (!guild) return null;
 
+  const botUserId = guild.client?.user?.id || guild.members?.me?.id || null;
+  if (botUserId && typeof guild.members?.fetch === "function") {
+    try {
+      return await guild.members.fetch({ user: botUserId, force: true });
+    } catch {
+      // Fall back to fetchMe/cached member when Discord cannot be refreshed.
+    }
+  }
+
   if (typeof guild.members?.fetchMe === "function") {
     try {
       return await guild.members.fetchMe({ force: true });
@@ -149,6 +158,10 @@ async function refreshNotificationChannel(channel) {
   return channel;
 }
 
+function labelsForPermissions(permissions = []) {
+  return permissions.map(permissionLabel);
+}
+
 async function getNotificationChannelPermissionStatus(channel, options = {}) {
   if (!channel?.guild) {
     return {
@@ -156,6 +169,10 @@ async function getNotificationChannelPermissionStatus(channel, options = {}) {
       channel: channel || null,
       missingPermissions: [...NOTIFICATION_REQUIRED_PERMISSIONS],
       missingPermissionLabels: NOTIFICATION_REQUIRED_PERMISSIONS.map(permissionLabel),
+      missingBasePermissions: [...NOTIFICATION_REQUIRED_PERMISSIONS],
+      missingBasePermissionLabels: NOTIFICATION_REQUIRED_PERMISSIONS.map(permissionLabel),
+      blockedByOverwritePermissions: [],
+      blockedByOverwritePermissionLabels: [],
     };
   }
 
@@ -170,18 +187,30 @@ async function getNotificationChannelPermissionStatus(channel, options = {}) {
   const botMember = options.refresh === true
     ? await getFreshBotMember(guild)
     : await getBotMember(guild);
-  const permissions = botMember
+  const effectivePermissions = botMember
     ? resolvedChannel.permissionsFor(botMember)
     : null;
+  const basePermissions = botMember?.permissions || null;
+
   const missingPermissions = NOTIFICATION_REQUIRED_PERMISSIONS.filter(
-    (permission) => !permissions?.has(permission)
+    (permission) => !effectivePermissions?.has(permission)
+  );
+  const missingBasePermissions = missingPermissions.filter(
+    (permission) => !basePermissions?.has(permission)
+  );
+  const blockedByOverwritePermissions = missingPermissions.filter(
+    (permission) => basePermissions?.has(permission)
   );
 
   return {
     ok: missingPermissions.length === 0,
     channel: resolvedChannel,
     missingPermissions,
-    missingPermissionLabels: missingPermissions.map(permissionLabel),
+    missingPermissionLabels: labelsForPermissions(missingPermissions),
+    missingBasePermissions,
+    missingBasePermissionLabels: labelsForPermissions(missingBasePermissions),
+    blockedByOverwritePermissions,
+    blockedByOverwritePermissionLabels: labelsForPermissions(blockedByOverwritePermissions),
   };
 }
 
@@ -263,6 +292,10 @@ async function getOrCreateEscalationNotificationChannel({
       channel,
       missingPermissions: permissionStatus.missingPermissions,
       missingPermissionLabels: permissionStatus.missingPermissionLabels,
+      missingBasePermissions: permissionStatus.missingBasePermissions,
+      missingBasePermissionLabels: permissionStatus.missingBasePermissionLabels,
+      blockedByOverwritePermissions: permissionStatus.blockedByOverwritePermissions,
+      blockedByOverwritePermissionLabels: permissionStatus.blockedByOverwritePermissionLabels,
     };
   }
 
