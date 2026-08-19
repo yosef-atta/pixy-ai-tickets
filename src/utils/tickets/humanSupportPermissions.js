@@ -37,6 +37,26 @@ async function getBotMember(guild) {
   }
 }
 
+async function refreshGuildChannels(guild) {
+  if (typeof guild?.channels?.fetch !== "function") return false;
+  try {
+    await guild.channels.fetch();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshGuildRoles(guild) {
+  if (typeof guild?.roles?.fetch !== "function") return false;
+  try {
+    await guild.roles.fetch();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getMissingPermissions(permissions, required = []) {
   if (!permissions) return [...required];
   return required.filter((permission) => !permissions.has(permission));
@@ -155,13 +175,13 @@ async function preflightFullControlForGuild(guild, options = {}) {
   ]);
 
   const [channelsFetched, rolesFetched] = await Promise.all([
-    guild.channels.fetch().then(() => true).catch(() => false),
-    guild.roles?.fetch?.().then(() => true).catch(() => false) || Promise.resolve(false),
+    refreshGuildChannels(guild),
+    refreshGuildRoles(guild),
   ]);
 
   for (const source of sources) {
     if (source.type !== TICKET_SOURCE_TYPES.CATEGORY) continue;
-    const category = guild.channels.cache.get(source.sourceId);
+    const category = guild.channels?.cache?.get?.(source.sourceId);
     if (!category || category.type !== ChannelType.GuildCategory) {
       if (channelsFetched) {
         issues.push({
@@ -199,7 +219,7 @@ async function preflightFullControlForGuild(guild, options = {}) {
       labels: ["Human Support escalation category is not configured"],
     });
   } else {
-    const destination = guild.channels.cache.get(config.escalationCategoryId);
+    const destination = guild.channels?.cache?.get?.(config.escalationCategoryId);
     if (!destination || destination.type !== ChannelType.GuildCategory) {
       issues.push({
         scope: "escalation_category",
@@ -239,7 +259,7 @@ async function preflightFullControlForGuild(guild, options = {}) {
       });
     } else {
       const hasValidRoute = routes.some(({ roleId }) =>
-        roleId !== guild.id && guild.roles.cache.has(roleId)
+        roleId !== guild.id && guild.roles?.cache?.has?.(roleId)
       );
       if (!hasValidRoute) {
         issues.push({
@@ -268,13 +288,13 @@ async function getSetupPermissionIssues({
   const botMember = await getBotMember(guild);
   if (!botMember) return ["Pixy could not resolve its server member for permission checks."];
 
-  await guild.channels.fetch().catch(() => null);
+  await refreshGuildChannels(guild);
   const issues = [];
   const fullControl = isFullTicketControlEnabled(settings || {});
 
   for (const source of sources) {
     if (source.type !== TICKET_SOURCE_TYPES.CATEGORY) continue;
-    const category = guild.channels.cache.get(source.sourceId);
+    const category = guild.channels?.cache?.get?.(source.sourceId);
     if (!category || category.type !== ChannelType.GuildCategory) continue;
 
     const required = [
@@ -295,10 +315,10 @@ async function getSetupPermissionIssues({
   }
 
   const escalationCategory = config?.escalationCategoryId
-    ? guild.channels.cache.get(config.escalationCategoryId)
+    ? guild.channels?.cache?.get?.(config.escalationCategoryId)
     : null;
   const notificationChannel = config?.escalationNotificationChannelId
-    ? guild.channels.cache.get(config.escalationNotificationChannelId)
+    ? guild.channels?.cache?.get?.(config.escalationNotificationChannelId)
     : null;
 
   if (settings?.escalationEnabled !== false && escalationCategory) {
@@ -357,4 +377,6 @@ module.exports = {
   permissionLabel,
   preflightFullControlForGuild,
   preflightFullControlForTicket,
+  refreshGuildChannels,
+  refreshGuildRoles,
 };
