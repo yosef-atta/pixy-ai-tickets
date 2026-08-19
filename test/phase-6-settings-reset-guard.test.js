@@ -11,6 +11,10 @@ const {
 const {
   DISABLED_MESSAGES,
 } = require("../src/features/ticketActionAvailability");
+const {
+  isSettingsComponent,
+  stopUnavailableSettingsInteraction,
+} = require("../src/events/interactionCreate");
 
 function missingSetupKnowledgeClient() {
   let creates = 0;
@@ -93,6 +97,54 @@ test("behavior changes cannot recreate operational config after Pixy was cleared
   assert.equal(result.code, "setup_required");
   assert.equal(settingReads, 0);
   assert.equal(settingWrites, 0);
+});
+
+test("stale settings components are blocked after clear before their handlers can mutate data", async () => {
+  const replies = [];
+  const interaction = {
+    customId: "settings_safety_add_blocked:user-1",
+    guild: { id: "guild-cleared" },
+  };
+  const client = {
+    guildConfig: {
+      async findUnique() {
+        return null;
+      },
+    },
+  };
+
+  assert.equal(isSettingsComponent(interaction), true);
+  const stopped = await stopUnavailableSettingsInteraction(interaction, {
+    client,
+    async reply(subject, payload) {
+      replies.push({ subject, payload });
+    },
+  });
+
+  assert.equal(stopped, true);
+  assert.equal(replies.length, 1);
+  assert.match(String(replies[0].payload), /\/pixy-setup/);
+});
+
+test("current settings components remain usable while core setup exists", async () => {
+  const interaction = {
+    customId: "settings_toggle:user-1",
+    guild: { id: "guild-live" },
+  };
+  const stopped = await stopUnavailableSettingsInteraction(interaction, {
+    client: {
+      guildConfig: {
+        async findUnique() {
+          return { guildId: "guild-live" };
+        },
+      },
+    },
+    async reply() {
+      throw new Error("should not reply when setup exists");
+    },
+  });
+
+  assert.equal(stopped, false);
 });
 
 test("interaction error map tells cleared servers to run setup again", () => {
