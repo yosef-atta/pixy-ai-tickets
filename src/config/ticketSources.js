@@ -1,6 +1,9 @@
-const { ChannelType } = require("discord.js");
 const { prisma } = require("./prisma");
 const { TICKET_SOURCE_TYPES } = require("./productDefaults");
+const {
+  isCategoryTicketChannel,
+  isThreadTicketChannel,
+} = require("../utils/tickets/ticketSurface");
 
 const VALID_SOURCE_TYPES = new Set(Object.values(TICKET_SOURCE_TYPES));
 
@@ -89,16 +92,17 @@ async function upsertTicketSource({ guildId, type, sourceId, enabled = true }, o
   });
 }
 
-async function replaceCategoryTicketSources(guildId, categoryIds, options = {}) {
+async function replaceTicketSourcesByType(guildId, type, sourceIds, options = {}) {
   const client = options.client || prisma;
   const normalizedGuildId = normalizeGuildId(guildId);
-  const normalizedIds = [...new Set((categoryIds || []).map(normalizeSourceId))];
+  const normalizedType = normalizeSourceType(type);
+  const normalizedIds = [...new Set((sourceIds || []).map(normalizeSourceId))];
 
   const execute = async (tx) => {
     await tx.ticketSource.deleteMany({
       where: {
         guildId: normalizedGuildId,
-        type: TICKET_SOURCE_TYPES.CATEGORY,
+        type: normalizedType,
         ...(normalizedIds.length ? { sourceId: { notIn: normalizedIds } } : {}),
       },
     });
@@ -107,7 +111,7 @@ async function replaceCategoryTicketSources(guildId, categoryIds, options = {}) 
     for (const sourceId of normalizedIds) {
       saved.push(await upsertTicketSource({
         guildId: normalizedGuildId,
-        type: TICKET_SOURCE_TYPES.CATEGORY,
+        type: normalizedType,
         sourceId,
         enabled: true,
       }, { client: tx }));
@@ -119,6 +123,24 @@ async function replaceCategoryTicketSources(guildId, categoryIds, options = {}) 
     return client.$transaction(async (tx) => execute(tx));
   }
   return execute(client);
+}
+
+async function replaceCategoryTicketSources(guildId, categoryIds, options = {}) {
+  return replaceTicketSourcesByType(
+    guildId,
+    TICKET_SOURCE_TYPES.CATEGORY,
+    categoryIds,
+    options
+  );
+}
+
+async function replaceThreadParentTicketSources(guildId, parentIds, options = {}) {
+  return replaceTicketSourcesByType(
+    guildId,
+    TICKET_SOURCE_TYPES.THREAD_PARENT,
+    parentIds,
+    options
+  );
 }
 
 async function ensureLegacyTicketCategorySource(guildId, options = {}) {
@@ -162,10 +184,18 @@ async function getTicketSource(guildId, type, sourceId, options = {}) {
 function findMatchingSourceForChannel(channel, sources = []) {
   if (!channel) return null;
 
-  if (channel.type === ChannelType.GuildText) {
+  if (isCategoryTicketChannel(channel)) {
     return sources.find((source) =>
       source?.enabled !== false &&
       source.type === TICKET_SOURCE_TYPES.CATEGORY &&
+      source.sourceId === channel.parentId
+    ) || null;
+  }
+
+  if (isThreadTicketChannel(channel)) {
+    return sources.find((source) =>
+      source?.enabled !== false &&
+      source.type === TICKET_SOURCE_TYPES.THREAD_PARENT &&
       source.sourceId === channel.parentId
     ) || null;
   }
@@ -190,5 +220,7 @@ module.exports = {
   normalizeSourceId,
   normalizeSourceType,
   replaceCategoryTicketSources,
+  replaceThreadParentTicketSources,
+  replaceTicketSourcesByType,
   upsertTicketSource,
 };
