@@ -54,7 +54,7 @@ test("public help, settings, and lock copy point administrators to billing", () 
 
   assert.match(help, /Plans & Billing/);
   assert.match(help, /generic AI replies/i);
-  assert.match(settings, /subscription-locked/);
+  assert.match(settings, /New additions are currently locked/);
   assert.match(settings, /\/pixy-billing/);
   assert.match(entitlement, /\/pixy-billing/);
 });
