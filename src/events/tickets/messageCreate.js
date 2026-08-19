@@ -1,4 +1,4 @@
-const { Events, ChannelType } = require("discord.js");
+const { Events } = require("discord.js");
 const { prisma } = require("../../config/prisma");
 const { aiConfig } = require("../../config/ai");
 const { buildTicketContext } = require("../../ai/buildTicketContext");
@@ -24,6 +24,7 @@ const { splitDiscordMessage } = require("../../utils/splitDiscordMessage");
 const { validateTicketAction } = require("../../utils/tickets/actions/ticketActionValidator");
 const { executeTicketAction } = require("../../utils/tickets/actions/ticketActionExecutor");
 const { TICKET_ACTIONS } = require("../../utils/tickets/actions/ticketActionTypes");
+const { isSupportedTicketChannel } = require("../../utils/tickets/ticketSurface");
 
 const channelCooldowns = new Map();
 const channelControlPlans = new Map();
@@ -213,7 +214,7 @@ const messageCreateEvent = {
   name: Events.MessageCreate,
   async execute(message) {
     try {
-      if (shouldIgnoreMessage(message) || message.channel.type !== ChannelType.GuildText) return;
+      if (shouldIgnoreMessage(message) || !isSupportedTicketChannel(message.channel)) return;
 
       const lifecycle = await reconcileTicketChannel(message.channel);
       if (!lifecycle.tracked) return;
