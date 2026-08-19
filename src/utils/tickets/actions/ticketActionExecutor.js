@@ -89,33 +89,42 @@ function snapshotRoleAccessOverwrite(overwrite) {
   return snapshot;
 }
 
-async function applyFullControlEscalation({ message, role, categoryId, name, auditReason }) {
+function captureFullControlEscalationState(message, role) {
   const originalOverwrite = message.channel.permissionOverwrites.cache.get(role.id) || null;
-  const state = {
+  return {
     originalParentId: message.channel.parentId,
     originalName: message.channel.name,
     roleOverwriteCreated: !originalOverwrite,
     originalRoleAccess: snapshotRoleAccessOverwrite(originalOverwrite),
   };
+}
 
-  await message.channel.permissionOverwrites.edit(
-    role,
-    { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
-    { reason: auditReason }
-  );
+async function applyFullControlEscalation({ message, role, categoryId, name, auditReason }) {
+  const state = captureFullControlEscalationState(message, role);
 
-  if (message.channel.parentId !== categoryId) {
-    await message.channel.setParent(categoryId, {
-      lockPermissions: false,
-      reason: auditReason,
-    });
+  try {
+    await message.channel.permissionOverwrites.edit(
+      role,
+      { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
+      { reason: auditReason }
+    );
+
+    if (message.channel.parentId !== categoryId) {
+      await message.channel.setParent(categoryId, {
+        lockPermissions: false,
+        reason: auditReason,
+      });
+    }
+
+    if (name && name !== message.channel.name) {
+      await message.channel.setName(name, auditReason);
+    }
+
+    return state;
+  } catch (error) {
+    error.pixyMutationState = state;
+    throw error;
   }
-
-  if (name && name !== message.channel.name) {
-    await message.channel.setName(name, auditReason);
-  }
-
-  return state;
 }
 
 async function rollbackFullControlEscalation({ message, role, state }) {
@@ -309,6 +318,7 @@ async function executeEscalateTicket({ actionRequest, message, validation }) {
       auditReason,
     });
   } catch (error) {
+    mutationState = error?.pixyMutationState || mutationState;
     await rollbackFullControlEscalation({ message, role, state: mutationState });
     return performOverlayHandoff({
       ...common,
@@ -453,6 +463,7 @@ async function executeTicketAction({
 module.exports = {
   applyFullControlEscalation,
   buildOverlayHandoffReply,
+  captureFullControlEscalationState,
   executeTicketAction,
   performOverlayHandoff,
   rollbackFullControlEscalation,
