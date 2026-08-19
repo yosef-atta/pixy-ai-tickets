@@ -121,18 +121,25 @@ test("guild AI foundation preserves the existing Groq key and prefers the guild 
   assert.equal(getProviderCredentialType("future-provider"), "future-provider-api-key");
 });
 
-test("setup progress can resume legacy setup and treats human support as optional", async () => {
-  const completeClient = {
+test("setup progress resumes through the optional human-support step", async () => {
+  const readyForHumanSupportClient = {
     ticketSource: { async count() { return 1; } },
     guildConfig: { async findUnique() { return { ticketCategoryId: null }; } },
-    guildAiConfig: { async findUnique() { return { credentialEncrypted: "key" }; } },
+    guildAiConfig: {
+      async findUnique() {
+        return { provider: "groq", credentialEncrypted: "key" };
+      },
+    },
     guildSetting: { async findUnique() { return null; } },
   };
 
-  assert.deepEqual(await inferSetupProgress(GUILD_ID, { client: completeClient }), {
-    lastStep: SETUP_STEPS.COMPLETE,
-    completed: true,
-  });
+  assert.deepEqual(
+    await inferSetupProgress(GUILD_ID, { client: readyForHumanSupportClient }),
+    {
+      lastStep: SETUP_STEPS.HUMAN_SUPPORT,
+      completed: false,
+    }
+  );
 
   const missingAiClient = {
     ticketSource: { async count() { return 0; } },
