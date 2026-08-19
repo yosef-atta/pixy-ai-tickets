@@ -19,6 +19,7 @@ const {
 const {
   listTicketSources,
   replaceCategoryTicketSources,
+  replaceThreadParentTicketSources,
   upsertTicketSource,
 } = require("../config/ticketSources");
 const {
@@ -31,6 +32,9 @@ const {
 const {
   reconcileGuildTicketChannels,
 } = require("../tickets/ticketChannelLifecycle");
+const {
+  isThreadParentChannel,
+} = require("../utils/tickets/ticketSurface");
 
 const AUTO_TICKET_CATEGORY_NAMES = Object.freeze([
   "pixy-tickets",
@@ -47,6 +51,23 @@ function normalizeIds(values) {
   return [...new Set((values || [])
     .map((value) => String(value || "").trim())
     .filter(Boolean))];
+}
+
+function normalizeSourceRefs(values) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values || []) {
+    const type = String(value?.type || "").trim().toLowerCase();
+    const sourceId = String(value?.sourceId || "").trim();
+    if (!Object.values(TICKET_SOURCE_TYPES).includes(type) || !sourceId) continue;
+    const key = `${type}:${sourceId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ type, sourceId });
+  }
+
+  return result;
 }
 
 async function withTransaction(client, callback) {
@@ -74,6 +95,20 @@ async function validateCategoryIds(guild, categoryIds) {
     if (channel?.type === ChannelType.GuildCategory) categories.push(channel);
   }
   return categories;
+}
+
+async function validateThreadParentIds(guild, parentIds) {
+  const ids = normalizeIds(parentIds);
+  if (!guild || !ids.length) return [];
+
+  await guild.channels?.fetch?.().catch(() => null);
+  const parents = [];
+  for (const id of ids) {
+    const cached = guild.channels?.cache?.get(id);
+    const channel = cached || await guild.channels?.fetch?.(id).catch(() => null);
+    if (isThreadParentChannel(channel)) parents.push(channel);
+  }
+  return parents;
 }
 
 async function createOrFindCategory(guild, names, reason) {
@@ -146,9 +181,84 @@ async function setTicketCategories(guildId, categoryIds, options = {}) {
     return sources;
   });
 
-  // First-run onboarding intentionally stays inactive until completion so Pixy
-  // does not send controls or attempt AI replies while the API credential is
-  // still being configured.
+  if (activate && options.guild) {
+    await (options.reconcileTickets || reconcileGuildTicketChannels)(options.guild, {
+      client,
+      ensureControls: options.ensureControls !== false,
+      logger: options.logger,
+    });
+  }
+  return result;
+}
+
+async function setThreadParents(guildId, parentIds, options = {}) {
+  const client = options.client || prisma;
+  const ids = normalizeIds(parentIds);
+  if (!ids.length) throw new TypeError("At least one thread parent is required.");
+  const activate = options.activate === true;
+
+  const result = await withTransaction(client, async (tx) => {
+    await ensureGuildConfig(guildId, { client: tx });
+    const sources = await replaceThreadParentTicketSources(guildId, ids, {
+      client: tx,
+      useTransaction: false,
+    });
+    await tx.guildConfig.update({
+      where: { guildId },
+      data: { enabled: activate },
+    });
+    return sources;
+  });
+
+  if (activate && options.guild) {
+    await (options.reconcileTickets || reconcileGuildTicketChannels)(options.guild, {
+      client,
+      ensureControls: options.ensureControls !== false,
+      logger: options.logger,
+    });
+  }
+  return result;
+}
+
+async function addTicketSources(guildId, refs, options = {}) {
+  const client = options.client || prisma;
+  const sourcesToAdd = normalizeSourceRefs(refs);
+  if (!sourcesToAdd.length) return [];
+  const activate = options.activate !== false;
+
+  const result = await withTransaction(client, async (tx) => {
+    const config = await ensureGuildConfig(guildId, { client: tx });
+    for (const source of sourcesToAdd) {
+      await upsertTicketSource({
+        guildId,
+        type: source.type,
+        sourceId: source.sourceId,
+        enabled: true,
+      }, { client: tx });
+    }
+
+    const sources = await tx.ticketSource.findMany({
+      where: { guildId, enabled: true },
+      orderBy: [{ type: "asc" }, { createdAt: "asc" }],
+    });
+    const categorySources = sources.filter((source) =>
+      source.type === TICKET_SOURCE_TYPES.CATEGORY
+    );
+    const activeCategoryIds = new Set(categorySources.map((source) => source.sourceId));
+    const primaryCategoryId = activeCategoryIds.has(config.ticketCategoryId)
+      ? config.ticketCategoryId
+      : categorySources[0]?.sourceId || null;
+
+    await tx.guildConfig.update({
+      where: { guildId },
+      data: {
+        enabled: activate,
+        ticketCategoryId: primaryCategoryId,
+      },
+    });
+    return sources;
+  });
+
   if (activate && options.guild) {
     await (options.reconcileTickets || reconcileGuildTicketChannels)(options.guild, {
       client,
@@ -160,77 +270,55 @@ async function setTicketCategories(guildId, categoryIds, options = {}) {
 }
 
 async function addTicketCategories(guildId, categoryIds, options = {}) {
-  const client = options.client || prisma;
-  const ids = normalizeIds(categoryIds);
-  if (!ids.length) return [];
-
-  const result = await withTransaction(client, async (tx) => {
-    const config = await ensureGuildConfig(guildId, { client: tx });
-    for (const sourceId of ids) {
-      await upsertTicketSource({
-        guildId,
-        type: TICKET_SOURCE_TYPES.CATEGORY,
-        sourceId,
-        enabled: true,
-      }, { client: tx });
-    }
-
-    const sources = await tx.ticketSource.findMany({
-      where: {
-        guildId,
-        type: TICKET_SOURCE_TYPES.CATEGORY,
-        enabled: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
-    const activeIds = new Set(sources.map((source) => source.sourceId));
-    const primary = activeIds.has(config.ticketCategoryId)
-      ? config.ticketCategoryId
-      : sources[0]?.sourceId || ids[0];
-
-    await tx.guildConfig.update({
-      where: { guildId },
-      data: { enabled: true, ticketCategoryId: primary },
-    });
-    return sources;
-  });
-
-  if (options.guild) {
-    await (options.reconcileTickets || reconcileGuildTicketChannels)(options.guild, {
-      client,
-      ensureControls: options.ensureControls !== false,
-      logger: options.logger,
-    });
-  }
-  return result;
+  return addTicketSources(
+    guildId,
+    normalizeIds(categoryIds).map((sourceId) => ({
+      type: TICKET_SOURCE_TYPES.CATEGORY,
+      sourceId,
+    })),
+    options
+  );
 }
 
-async function removeTicketCategories(guildId, categoryIds, options = {}) {
+async function addThreadParents(guildId, parentIds, options = {}) {
+  return addTicketSources(
+    guildId,
+    normalizeIds(parentIds).map((sourceId) => ({
+      type: TICKET_SOURCE_TYPES.THREAD_PARENT,
+      sourceId,
+    })),
+    options
+  );
+}
+
+async function removeTicketSources(guildId, refs, options = {}) {
   const client = options.client || prisma;
-  const ids = normalizeIds(categoryIds);
-  if (!ids.length) return [];
+  const sourcesToRemove = normalizeSourceRefs(refs);
+  if (!sourcesToRemove.length) return [];
 
   const remaining = await withTransaction(client, async (tx) => {
     await ensureGuildConfig(guildId, { client: tx });
-    await tx.ticketSource.deleteMany({
-      where: {
-        guildId,
-        type: TICKET_SOURCE_TYPES.CATEGORY,
-        sourceId: { in: ids },
-      },
-    });
+    for (const source of sourcesToRemove) {
+      await tx.ticketSource.deleteMany({
+        where: {
+          guildId,
+          type: source.type,
+          sourceId: source.sourceId,
+        },
+      });
+    }
+
     const sources = await tx.ticketSource.findMany({
-      where: {
-        guildId,
-        type: TICKET_SOURCE_TYPES.CATEGORY,
-        enabled: true,
-      },
-      orderBy: { createdAt: "asc" },
+      where: { guildId, enabled: true },
+      orderBy: [{ type: "asc" }, { createdAt: "asc" }],
     });
+    const firstCategory = sources.find((source) =>
+      source.type === TICKET_SOURCE_TYPES.CATEGORY
+    );
     await tx.guildConfig.update({
       where: { guildId },
       data: {
-        ticketCategoryId: sources[0]?.sourceId || null,
+        ticketCategoryId: firstCategory?.sourceId || null,
       },
     });
     return sources;
@@ -244,6 +332,28 @@ async function removeTicketCategories(guildId, categoryIds, options = {}) {
     });
   }
   return remaining;
+}
+
+async function removeTicketCategories(guildId, categoryIds, options = {}) {
+  return removeTicketSources(
+    guildId,
+    normalizeIds(categoryIds).map((sourceId) => ({
+      type: TICKET_SOURCE_TYPES.CATEGORY,
+      sourceId,
+    })),
+    options
+  );
+}
+
+async function removeThreadParents(guildId, parentIds, options = {}) {
+  return removeTicketSources(
+    guildId,
+    normalizeIds(parentIds).map((sourceId) => ({
+      type: TICKET_SOURCE_TYPES.THREAD_PARENT,
+      sourceId,
+    })),
+    options
+  );
 }
 
 async function setEscalationEnabled(guildId, enabled, options = {}) {
@@ -371,7 +481,6 @@ async function completeOnboarding(guildId, options = {}) {
   const refreshControls = options.refreshControls || refreshOpenTicketControlsAfterBillingMutation;
   const reconcileTickets = options.reconcileTickets || reconcileGuildTicketChannels;
 
-  // Billing is initialized only after the required onboarding steps are ready.
   const billing = await startTrial(guildId, {
     client,
     actorUserId: options.actorUserId,
@@ -433,29 +542,47 @@ async function moveSetupToHumanSupport(guildId, options = {}) {
   return markSetupStep(guildId, SETUP_STEPS.HUMAN_SUPPORT, options);
 }
 
+async function listSetupTicketSources(guildId, options = {}) {
+  return listTicketSources(guildId, options);
+}
+
 async function listCategoryTicketSources(guildId, options = {}) {
   const sources = await listTicketSources(guildId, options);
   return sources.filter((source) => source.type === TICKET_SOURCE_TYPES.CATEGORY);
 }
 
+async function listThreadParentTicketSources(guildId, options = {}) {
+  const sources = await listTicketSources(guildId, options);
+  return sources.filter((source) => source.type === TICKET_SOURCE_TYPES.THREAD_PARENT);
+}
+
 module.exports = {
   AUTO_ESCALATION_CATEGORY_NAMES,
   AUTO_TICKET_CATEGORY_NAMES,
+  addThreadParents,
   addTicketCategories,
+  addTicketSources,
   completeOnboarding,
   configureEscalationCategory,
   createOrFindEscalationCategory,
   createOrFindTicketCategory,
   getMaxAdminRoutes,
   listCategoryTicketSources,
+  listSetupTicketSources,
+  listThreadParentTicketSources,
   moveSetupToAiProvider,
   moveSetupToHumanSupport,
   normalizeIds,
+  normalizeSourceRefs,
   removeSupportRoutes,
+  removeThreadParents,
   removeTicketCategories,
+  removeTicketSources,
   setEscalationEnabled,
+  setThreadParents,
   setTicketCategories,
   skipHumanSupportAndComplete,
   upsertSupportRoute,
   validateCategoryIds,
+  validateThreadParentIds,
 };
