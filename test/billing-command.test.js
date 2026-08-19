@@ -94,14 +94,16 @@ for (const [name, billing] of Object.entries(ROWS)) {
     const embed = getEmbedJson(payload);
     const timeline = getField(embed, "Billing timeline").value;
     const features = getField(embed, "Feature availability").value;
-    const groq = getField(embed, "Groq usage").value;
+    const providerUsage = getField(embed, "AI provider usage").value;
 
     assert.equal(getField(embed, "Effective plan").value, summary.planLabel);
     assert.match(getField(embed, "Remaining").value, summary.remaining.unlimited ? /Unlimited/ : /day|Expired/);
     assert.match(features, /Generic AI replies/);
     assert.match(features, /Learned knowledge/);
     assert.match(features, /Agent ticket actions/);
-    assert.match(groq, /guild supplies its own Groq API key/);
+    assert.match(providerUsage, /selected AI provider/);
+    assert.match(providerUsage, /Groq, Google Gemini, or Mistral/);
+    assert.match(providerUsage, /shared provider quota/);
 
     if (summary.trial.startedAt) assert.match(timeline, /Trial started/);
     if (summary.pro.startedAt) assert.match(timeline, /Pro started/);
@@ -124,6 +126,7 @@ test("missing billing is shown clearly and still offers activation contacts", ()
   assert.equal(getField(embed, "Status").value, "Not initialized");
   assert.match(embed.description, /Billing has not been initialized/);
   assert.match(embed.description, /\/pixy-setup/);
+  assert.match(embed.description, /complete onboarding/);
   assert.equal(menu.placeholder, "Activate Pixy Pro...");
 });
 
@@ -306,7 +309,8 @@ for (const [methodKey, ownerId, otherOwnerId, label] of [
     assert.match(reply.content, /Pixy Test Guild/);
     assert.match(reply.content, new RegExp(GUILD_ID));
     assert.match(reply.content, /desired subscription duration/);
-    assert.match(reply.content, /Never send passwords, Discord tokens, Groq API keys/);
+    assert.match(reply.content, /Never send passwords, Discord tokens, AI provider API keys/);
+    assert.doesNotMatch(reply.content, /Groq API keys/);
     assert.match(reply.content, /did not send the owner a DM/);
     assert.match(reply.content, /activate\/renew this server automatically/);
   });
