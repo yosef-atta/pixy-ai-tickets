@@ -153,6 +153,27 @@ async function withTransaction(client, callback) {
   return callback(client);
 }
 
+async function syncLegacyProviderState(tx, guildId, providerId, model) {
+  if (tx.guildConfig?.updateMany) {
+    await tx.guildConfig.updateMany({
+      where: { guildId },
+      data: {
+        aiProvider: providerId,
+        aiModel: model || null,
+      },
+    });
+  }
+}
+
+async function syncLegacyGroqSetting(tx, guildId, data) {
+  if (!tx.guildSetting?.upsert) return;
+  await tx.guildSetting.upsert({
+    where: { guildId },
+    create: { guildId, ...data },
+    update: data,
+  });
+}
+
 async function saveGuildAiCredential(guildId, credential, options = {}) {
   const client = options.client || prisma;
   const normalizedGuildId = normalizeGuildId(guildId);
@@ -186,20 +207,13 @@ async function saveGuildAiCredential(guildId, credential, options = {}) {
       },
     });
 
-    // Transitional dual-write for the current Groq UI and rollback safety.
-    // GuildAiConfig is authoritative; these fields can be removed in a later cleanup migration.
-    if (providerId === "groq" && tx.guildSetting?.upsert) {
-      await tx.guildSetting.upsert({
-        where: { guildId: normalizedGuildId },
-        create: {
-          guildId: normalizedGuildId,
-          groqApiKeyEncrypted: encrypted,
-          aiModel: nextModel,
-        },
-        update: {
-          groqApiKeyEncrypted: encrypted,
-          aiModel: nextModel,
-        },
+    await syncLegacyProviderState(tx, normalizedGuildId, providerId, nextModel);
+
+    // Transitional dual-write for rollback safety. GuildAiConfig is authoritative.
+    if (providerId === "groq") {
+      await syncLegacyGroqSetting(tx, normalizedGuildId, {
+        groqApiKeyEncrypted: encrypted,
+        aiModel: nextModel,
       });
     }
   });
@@ -212,6 +226,7 @@ async function removeGuildAiCredential(guildId, options = {}) {
   const normalizedGuildId = normalizeGuildId(guildId);
   const existing = await getOrCreateGuildAiConfig(normalizedGuildId, { client });
   const clearModel = options.clearModel !== false;
+  const nextModel = clearModel ? null : existing.model || null;
 
   await withTransaction(client, async (tx) => {
     await tx.guildAiConfig.update({
@@ -222,18 +237,12 @@ async function removeGuildAiCredential(guildId, options = {}) {
       },
     });
 
-    if (existing.provider === "groq" && tx.guildSetting?.upsert) {
-      await tx.guildSetting.upsert({
-        where: { guildId: normalizedGuildId },
-        create: {
-          guildId: normalizedGuildId,
-          groqApiKeyEncrypted: null,
-          ...(clearModel ? { aiModel: null } : {}),
-        },
-        update: {
-          groqApiKeyEncrypted: null,
-          ...(clearModel ? { aiModel: null } : {}),
-        },
+    await syncLegacyProviderState(tx, normalizedGuildId, existing.provider, nextModel);
+
+    if (existing.provider === "groq") {
+      await syncLegacyGroqSetting(tx, normalizedGuildId, {
+        groqApiKeyEncrypted: null,
+        ...(clearModel ? { aiModel: null } : {}),
       });
     }
   });
@@ -253,16 +262,11 @@ async function saveGuildAiModel(guildId, model, options = {}) {
       data: { model: normalizedModel },
     });
 
-    if (existing.provider === "groq" && tx.guildSetting?.upsert) {
-      await tx.guildSetting.upsert({
-        where: { guildId: normalizedGuildId },
-        create: {
-          guildId: normalizedGuildId,
-          aiModel: normalizedModel,
-        },
-        update: {
-          aiModel: normalizedModel,
-        },
+    await syncLegacyProviderState(tx, normalizedGuildId, existing.provider, normalizedModel);
+
+    if (existing.provider === "groq") {
+      await syncLegacyGroqSetting(tx, normalizedGuildId, {
+        aiModel: normalizedModel,
       });
     }
   });
@@ -290,20 +294,11 @@ async function setGuildAiProvider(guildId, provider, options = {}) {
       },
     });
 
-    if (tx.guildSetting?.upsert) {
-      await tx.guildSetting.upsert({
-        where: { guildId: normalizedGuildId },
-        create: {
-          guildId: normalizedGuildId,
-          groqApiKeyEncrypted: null,
-          aiModel: null,
-        },
-        update: {
-          groqApiKeyEncrypted: null,
-          aiModel: null,
-        },
-      });
-    }
+    await syncLegacyProviderState(tx, normalizedGuildId, providerDefinition.id, null);
+    await syncLegacyGroqSetting(tx, normalizedGuildId, {
+      groqApiKeyEncrypted: null,
+      aiModel: null,
+    });
   });
 
   return resolveGuildAiConfig(normalizedGuildId, { client });
