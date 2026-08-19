@@ -9,7 +9,10 @@ function resolveTicketOperatingMode(settings = {}) {
   const closeTicketEnabled = settings?.closeTicketEnabled === true;
   const renameReviewEnabled = settings?.renameReviewEnabled === true;
 
-  if (escalationEnabled && !closeTicketEnabled && !renameReviewEnabled) {
+  // Smart Overlay describes lifecycle ownership, not whether Human Support is
+  // configured. A server that skipped escalation can still be in Overlay mode
+  // as long as Pixy is not allowed to close or rename tickets.
+  if (!closeTicketEnabled && !renameReviewEnabled) {
     return TICKET_OPERATING_MODES.OVERLAY;
   }
 
@@ -26,10 +29,11 @@ function isFullTicketControlEnabled(settings = {}) {
 
 function getTicketOperatingModePreferences(mode) {
   if (mode === TICKET_OPERATING_MODES.OVERLAY) {
+    // Preserve the server's Human Support choice. Overlay only disables
+    // destructive ticket lifecycle actions.
     return {
       closeTicketEnabled: false,
       renameReviewEnabled: false,
-      escalationEnabled: true,
     };
   }
 
