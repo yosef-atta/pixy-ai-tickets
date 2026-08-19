@@ -136,19 +136,44 @@ async function preflightFullControlForGuild(guild, options = {}) {
   ]);
   if (guildMissing.length) issues.push(buildIssue("server", guildMissing));
 
-  const [sources, config] = await Promise.all([
+  const canLoadRoutes = Array.isArray(options.routes) || typeof client.adminRoute?.findMany === "function";
+  const [sources, config, routes] = await Promise.all([
     options.sources || listResolvedTicketSources(guild.id, { client }),
     options.config || client.guildConfig.findUnique({
       where: { guildId: guild.id },
       select: { escalationCategoryId: true },
     }),
+    Array.isArray(options.routes)
+      ? Promise.resolve(options.routes)
+      : canLoadRoutes
+        ? client.adminRoute.findMany({
+            where: { guildId: guild.id, enabled: true },
+            select: { roleId: true },
+            take: 25,
+          })
+        : Promise.resolve([]),
   ]);
-  await guild.channels.fetch().catch(() => null);
+
+  const [channelsFetched, rolesFetched] = await Promise.all([
+    guild.channels.fetch().then(() => true).catch(() => false),
+    guild.roles?.fetch?.().then(() => true).catch(() => false) || Promise.resolve(false),
+  ]);
 
   for (const source of sources) {
     if (source.type !== TICKET_SOURCE_TYPES.CATEGORY) continue;
     const category = guild.channels.cache.get(source.sourceId);
-    if (!category || category.type !== ChannelType.GuildCategory) continue;
+    if (!category || category.type !== ChannelType.GuildCategory) {
+      if (channelsFetched) {
+        issues.push({
+          scope: `ticket_source:${source.sourceId}`,
+          code: "invalid_ticket_source",
+          missingPermissions: [],
+          labels: ["Configured Ticket Source is missing"],
+          sourceId: source.sourceId,
+        });
+      }
+      continue;
+    }
 
     const missing = getMissingPermissions(category.permissionsFor(botMember), [
       PermissionFlagsBits.ViewChannel,
@@ -178,9 +203,9 @@ async function preflightFullControlForGuild(guild, options = {}) {
     if (!destination || destination.type !== ChannelType.GuildCategory) {
       issues.push({
         scope: "escalation_category",
-        code: "invalid_escalation_category",
+        code: channelsFetched ? "invalid_escalation_category" : "escalation_category_unavailable",
         missingPermissions: [],
-        labels: ["Human Support escalation category is missing"],
+        labels: [channelsFetched ? "Human Support escalation category is missing" : "Human Support escalation category could not be verified"],
       });
     } else {
       const destinationMissing = getMissingPermissions(
@@ -192,6 +217,36 @@ async function preflightFullControlForGuild(guild, options = {}) {
           ...buildIssue("escalation_category", destinationMissing),
           sourceId: destination.id,
           sourceName: destination.name,
+        });
+      }
+    }
+  }
+
+  if (canLoadRoutes) {
+    if (!routes.length) {
+      issues.push({
+        scope: "human_support_routes",
+        code: "missing_support_routes",
+        missingPermissions: [],
+        labels: ["At least one Human Support role route is required"],
+      });
+    } else if (!rolesFetched) {
+      issues.push({
+        scope: "human_support_routes",
+        code: "support_roles_unavailable",
+        missingPermissions: [],
+        labels: ["Human Support roles could not be verified"],
+      });
+    } else {
+      const hasValidRoute = routes.some(({ roleId }) =>
+        roleId !== guild.id && guild.roles.cache.has(roleId)
+      );
+      if (!hasValidRoute) {
+        issues.push({
+          scope: "human_support_routes",
+          code: "missing_support_routes",
+          missingPermissions: [],
+          labels: ["All configured Human Support roles are missing"],
         });
       }
     }
