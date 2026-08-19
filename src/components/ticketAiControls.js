@@ -10,6 +10,9 @@ const {
   TICKET_OPERATING_MODES,
   resolveTicketOperatingMode,
 } = require("../features/ticketOperatingMode");
+const {
+  getTicketSurfaceSettings,
+} = require("../utils/tickets/ticketSurface");
 const ticketControls = require("./ticketControls");
 const {
   buildSmartOverlayPayload,
@@ -138,13 +141,17 @@ function buildTicketControlPayload(aiEnabled = true, options = {}) {
 }
 
 function buildModeAwareTicketControlPayload(aiEnabled = true, options = {}) {
-  const mode = resolveTicketOperatingMode(options.settings);
+  const surfaceOptions = {
+    ...options,
+    settings: getTicketSurfaceSettings(options.channel, options.settings),
+  };
+  const mode = resolveTicketOperatingMode(surfaceOptions.settings);
 
   if (mode === TICKET_OPERATING_MODES.OVERLAY) {
-    return buildSmartOverlayPayload(aiEnabled, options);
+    return buildSmartOverlayPayload(aiEnabled, surfaceOptions);
   }
 
-  return buildTicketControlPayload(aiEnabled, options);
+  return buildTicketControlPayload(aiEnabled, surfaceOptions);
 }
 
 function buildTicketAiStateMessage({ enabled, previousEnabled, changed }) {
@@ -270,7 +277,7 @@ async function findTicketControlMessage(channel) {
 
 async function resolveRenderOptionsForChannel(channel, options = {}) {
   const guildId = channel?.guild?.id;
-  if (!guildId) return options;
+  if (!guildId) return { ...options, channel };
 
   const hasSettings = Object.prototype.hasOwnProperty.call(options, "settings");
   const hasEscalated = Object.prototype.hasOwnProperty.call(options, "escalated");
@@ -292,6 +299,7 @@ async function resolveRenderOptionsForChannel(channel, options = {}) {
 
   return {
     ...options,
+    channel,
     plan: options.plan || entitlement?.plan,
     settings: hasSettings ? options.settings : settings,
     escalated: hasEscalated ? options.escalated : ticketState?.escalated === true,
@@ -365,6 +373,7 @@ function installTicketAiSelectHandler() {
       buildModeAwareTicketControlPayload(result.enabled, {
         plan: entitlement.plan,
         settings,
+        channel: interaction.channel,
         escalated: result.ticket?.escalated === true,
       })
     );
