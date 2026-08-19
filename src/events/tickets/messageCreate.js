@@ -7,6 +7,7 @@ const {
   buildAssistantTicketPrompt,
 } = require("../../ai/buildAssistantTicketPrompt");
 const { generateAiReply } = require("../../ai/aiClient");
+const { getAiProvider } = require("../../ai/providers/providerRegistry");
 const { parseAiOutput } = require("../../ai/parseAiAction");
 const {
   getGuildAgentActionAvailability,
@@ -99,6 +100,15 @@ function getErrorStatus(error) {
   return error?.status || error?.code || error?.response?.status || error?.cause?.status || null;
 }
 
+function resolveUsageProvider(config, aiResult = null) {
+  const providerId = aiResult?.provider || config?.aiProvider || aiConfig.provider;
+  try {
+    return getAiProvider(providerId);
+  } catch {
+    return getAiProvider(aiConfig.provider);
+  }
+}
+
 async function safeReply(message, content) {
   try {
     await message.reply({
@@ -113,13 +123,14 @@ async function safeReply(message, content) {
 }
 
 async function logAiUsage({ message, config, aiResult, status, error }) {
+  const provider = resolveUsageProvider(config, aiResult);
   await prisma.aiUsageLog.create({
     data: {
       guildId: message.guild.id,
       channelId: message.channelId,
       userId: message.author?.id || null,
-      provider: config.aiProvider || aiConfig.provider,
-      model: aiResult?.model || config.aiModel || aiConfig.groq.model,
+      provider: aiResult?.provider || provider.id,
+      model: aiResult?.model || config?.aiModel || provider.defaultModel,
       promptTokens: aiResult?.usage?.prompt_tokens || null,
       completionTokens: aiResult?.usage?.completion_tokens || null,
       totalTokens: aiResult?.usage?.total_tokens || null,
@@ -269,8 +280,9 @@ const messageCreateEvent = {
       try {
         aiResult = await generateAiReply({
           messages,
-          provider: config.aiProvider || aiConfig.provider,
-          model: config.aiModel || aiConfig.groq.model,
+          guildId,
+          provider: config.aiProvider || null,
+          model: config.aiModel || null,
         });
       } catch (error) {
         const status = getErrorStatus(error);
@@ -416,4 +428,5 @@ module.exports = Object.assign(messageCreateEvent, {
   channelControlPlans,
   decorateOpeningContextPrompt,
   refreshControlsForPlanChange,
+  resolveUsageProvider,
 });
