@@ -1,81 +1,180 @@
 const assert = require("node:assert/strict");
 const { after, before, test } = require("node:test");
-const { execFileSync } = require("node:child_process");
-const path = require("node:path");
 
-const projectRoot = path.resolve(__dirname, "..");
-const originalDatabaseUrl = process.env.DATABASE_URL;
-let prisma;
+const { prisma } = require("../src/config/prisma");
+const {
+  deleteGuildOperationalData,
+} = require("../src/data/guildOperationalCleanup");
 
-function runPrismaCommand(args) {
-  execFileSync(process.execPath, [require.resolve("prisma/build/index.js"), ...args], {
-    cwd: projectRoot,
-    env: { ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL },
-    stdio: "pipe",
-  });
+const ALPHA = "phase9-isolation-alpha";
+const BETA = "phase9-isolation-beta";
+const GUILDS = [ALPHA, BETA];
+
+const OPERATIONAL_MODELS = [
+  "aiUsageLog",
+  "ticketChannel",
+  "learnedAnswer",
+  "adminRoute",
+  "guildIgnoredChannel",
+  "guildBlockedTerm",
+  "guildAllowedTerm",
+  "ticketSource",
+  "guildAiConfig",
+  "guildSetupState",
+  "guildSetting",
+  "guildConfig",
+];
+
+async function clearFixtureData() {
+  for (const guildId of GUILDS) {
+    await deleteGuildOperationalData(guildId, { client: prisma });
+  }
+  await prisma.billingEvent.deleteMany({ where: { guildId: { in: GUILDS } } });
+  await prisma.guildBilling.deleteMany({ where: { guildId: { in: GUILDS } } });
 }
 
-async function deleteGuildData(guildId) {
-  return prisma.$transaction([
-    prisma.aiUsageLog.deleteMany({ where: { guildId } }),
-    prisma.ticketChannel.deleteMany({ where: { guildId } }),
-    prisma.learnedAnswer.deleteMany({ where: { guildId } }),
-    prisma.adminRoute.deleteMany({ where: { guildId } }),
-    prisma.guildIgnoredChannel.deleteMany({ where: { guildId } }),
-    prisma.guildBlockedTerm.deleteMany({ where: { guildId } }),
-    prisma.guildAllowedTerm.deleteMany({ where: { guildId } }),
-    prisma.guildSetting.deleteMany({ where: { guildId } }),
-    prisma.guildConfig.deleteMany({ where: { guildId } }),
+async function createGuildFixture(guildId, suffix) {
+  await prisma.guildConfig.create({
+    data: {
+      guildId,
+      ticketCategoryId: `category-${suffix}`,
+      escalationCategoryId: `escalation-${suffix}`,
+    },
+  });
+  await prisma.guildSetting.create({
+    data: {
+      guildId,
+      groqApiKeyEncrypted: `v1:${suffix}-placeholder:tag:ciphertext`,
+      aiModel: "openai/gpt-oss-20b",
+    },
+  });
+
+  await Promise.all([
+    prisma.ticketSource.create({
+      data: {
+        guildId,
+        type: "category",
+        sourceId: `category-${suffix}`,
+      },
+    }),
+    prisma.guildAiConfig.create({
+      data: {
+        guildId,
+        provider: "groq",
+        model: "openai/gpt-oss-20b",
+        credentialEncrypted: `v1:${suffix}-provider:tag:ciphertext`,
+      },
+    }),
+    prisma.guildSetupState.create({
+      data: {
+        guildId,
+        setupVersion: 2,
+        lastStep: "complete",
+        completedAt: new Date("2026-08-19T12:00:00.000Z"),
+      },
+    }),
+    prisma.learnedAnswer.create({
+      data: {
+        guildId,
+        type: "qna",
+        question: `${suffix} question`,
+        answer: `${suffix} answer`,
+      },
+    }),
+    prisma.adminRoute.create({
+      data: {
+        guildId,
+        roleId: `role-${suffix}`,
+        description: `${suffix} support route`,
+      },
+    }),
+    prisma.guildIgnoredChannel.create({
+      data: {
+        guildId,
+        channelId: `ignored-${suffix}`,
+        reason: "Isolation fixture",
+      },
+    }),
+    prisma.guildBlockedTerm.create({
+      data: {
+        guildId,
+        term: `blocked-${suffix}`,
+        normalizedTerm: `blocked-${suffix}`,
+      },
+    }),
+    prisma.guildAllowedTerm.create({
+      data: {
+        guildId,
+        term: `allowed-${suffix}`,
+        normalizedTerm: `alowed-${suffix}`,
+        reason: "Isolation fixture",
+      },
+    }),
+    prisma.ticketChannel.create({
+      data: {
+        guildId,
+        channelId: `ticket-${suffix}`,
+      },
+    }),
+    prisma.aiUsageLog.create({
+      data: {
+        guildId,
+        channelId: `ticket-${suffix}`,
+        provider: "groq",
+        model: "openai/gpt-oss-20b",
+        status: "success",
+      },
+    }),
+    prisma.guildBilling.create({
+      data: {
+        guildId,
+        trialStartedAt: new Date("2026-08-12T12:00:00.000Z"),
+        trialEndsAt: new Date("2026-08-19T12:00:00.000Z"),
+      },
+    }),
+    prisma.billingEvent.create({
+      data: {
+        guildId,
+        actorUserId: `actor-${suffix}`,
+        action: "trial_started",
+      },
+    }),
   ]);
 }
 
 before(async () => {
-  if (!process.env.TEST_DATABASE_URL) {
-    throw new Error("TEST_DATABASE_URL is required. Start mysql_test with npm run db:up.");
-  }
-  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-  runPrismaCommand(["db", "push", "--force-reset", "--schema", "prisma/schema.prisma"]);
-  const prismaModulePath = require.resolve("../src/config/prisma");
-  delete require.cache[prismaModulePath];
-  ({ prisma } = require("../src/config/prisma"));
-
-  await prisma.guildConfig.createMany({ data: [
-    { guildId: "guild-alpha", ticketCategoryId: "category-alpha" },
-    { guildId: "guild-beta", ticketCategoryId: "category-beta" },
-  ] });
-  await prisma.guildSetting.createMany({ data: [
-    { guildId: "guild-alpha", groqApiKeyEncrypted: "v1:alpha-placeholder:tag:ciphertext", aiModel: "openai/gpt-oss-20b" },
-    { guildId: "guild-beta", groqApiKeyEncrypted: "v1:beta-placeholder:tag:ciphertext", aiModel: "openai/gpt-oss-120b" },
-  ] });
-  await prisma.learnedAnswer.createMany({ data: [
-    { guildId: "guild-alpha", type: "qna", question: "Alpha question", answer: "Alpha answer" },
-    { guildId: "guild-beta", type: "qna", question: "Beta question", answer: "Beta answer" },
-  ] });
-  await prisma.adminRoute.createMany({ data: [
-    { guildId: "guild-alpha", roleId: "role-alpha", description: "Alpha support route" },
-    { guildId: "guild-beta", roleId: "role-beta", description: "Beta support route" },
-  ] });
-  await prisma.ticketChannel.createMany({ data: [
-    { guildId: "guild-alpha", channelId: "channel-alpha" },
-    { guildId: "guild-beta", channelId: "channel-beta" },
-  ] });
-  await prisma.aiUsageLog.createMany({ data: [
-    { guildId: "guild-alpha", channelId: "channel-alpha", provider: "groq", status: "success" },
-    { guildId: "guild-beta", channelId: "channel-beta", provider: "groq", status: "success" },
-  ] });
+  await clearFixtureData();
+  await createGuildFixture(ALPHA, "alpha");
+  await createGuildFixture(BETA, "beta");
 });
 
 after(async () => {
-  if (prisma) await prisma.$disconnect();
-  if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-  else process.env.DATABASE_URL = originalDatabaseUrl;
+  await clearFixtureData();
+  await prisma.$disconnect();
 });
 
-test("deleting one guild does not affect another guild", async () => {
-  await deleteGuildData("guild-alpha");
-  const models = ["guildConfig", "guildSetting", "learnedAnswer", "adminRoute", "ticketChannel", "aiUsageLog"];
-  for (const modelName of models) {
-    assert.equal(await prisma[modelName].count({ where: { guildId: "guild-alpha" } }), 0);
-    assert.equal(await prisma[modelName].count({ where: { guildId: "guild-beta" } }), 1);
+test("operational reset deletes exactly one guild while preserving another guild and billing continuity", async () => {
+  const result = await deleteGuildOperationalData(ALPHA, { client: prisma });
+
+  assert.equal(result.guildId, ALPHA);
+  assert.equal(result.billingPreserved, true);
+  assert.ok(result.totalDeleted >= OPERATIONAL_MODELS.length);
+
+  for (const modelName of OPERATIONAL_MODELS) {
+    assert.equal(
+      await prisma[modelName].count({ where: { guildId: ALPHA } }),
+      0,
+      `${modelName} should be deleted for alpha`
+    );
+    assert.equal(
+      await prisma[modelName].count({ where: { guildId: BETA } }),
+      1,
+      `${modelName} should remain for beta`
+    );
   }
+
+  assert.equal(await prisma.guildBilling.count({ where: { guildId: ALPHA } }), 1);
+  assert.equal(await prisma.billingEvent.count({ where: { guildId: ALPHA } }), 1);
+  assert.equal(await prisma.guildBilling.count({ where: { guildId: BETA } }), 1);
+  assert.equal(await prisma.billingEvent.count({ where: { guildId: BETA } }), 1);
 });
