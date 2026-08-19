@@ -20,7 +20,8 @@ const PREFIX = Object.freeze({
 const PAGES = Object.freeze({
   HOME: "home",
   QUICKSTART: "quickstart",
-  GROQ: "groq",
+  SOURCES: "sources",
+  AI: "ai",
   BILLING: "billing",
   FEATURES: "features",
   COMMANDS: "commands",
@@ -30,37 +31,43 @@ const PAGES = Object.freeze({
 const TOPICS = Object.freeze([
   {
     label: "Quick Start",
-    description: "Set up Pixy from ticket category to AI replies",
+    description: "Complete the new setup flow from Ticket Sources to Trial",
     value: PAGES.QUICKSTART,
     emoji: "🚀",
   },
   {
-    label: "Groq API Key",
-    description: "Create and connect your server's Groq key",
-    value: PAGES.GROQ,
-    emoji: "🔑",
+    label: "Ticket Sources & Threads",
+    description: "Categories, Thread Parents, and thread safety behavior",
+    value: PAGES.SOURCES,
+    emoji: "🧵",
+  },
+  {
+    label: "AI Provider",
+    description: "Connect Groq, validate the API key, and choose a model",
+    value: PAGES.AI,
+    emoji: "🤖",
   },
   {
     label: "Plans & Billing",
-    description: "Understand Trial, Pro, Partner, and Expired mode",
+    description: "Trial, Pro, Partner, Expired, and manual activation",
     value: PAGES.BILLING,
     emoji: "💳",
   },
   {
-    label: "Features",
-    description: "Understand each Pixy feature toggle",
+    label: "Features & Safety",
+    description: "Behavior, knowledge, safety, and excluded tickets",
     value: PAGES.FEATURES,
-    emoji: "🧩",
+    emoji: "🛡️",
   },
   {
     label: "Commands",
-    description: "See what each Pixy slash command does",
+    description: "See the small public Pixy command surface",
     value: PAGES.COMMANDS,
     emoji: "⌨️",
   },
   {
     label: "Troubleshooting",
-    description: "Fix setup, subscription, key, model, and permission issues",
+    description: "Fix setup, provider, Thread, plan, and permission issues",
     value: PAGES.TROUBLESHOOTING,
     emoji: "🛠️",
   },
@@ -92,6 +99,7 @@ function topicMenu(userId) {
   return createStringSelectMenus({
     customId: scoped(PREFIX.NAV, userId),
     placeholder: "Choose a help topic...",
+    includeReset: false,
     options: TOPICS,
   });
 }
@@ -123,13 +131,13 @@ function home(userId) {
     .setTitle("🤖 Pixy Help")
     .setColor(0x5865f2)
     .setDescription([
-      "Choose a topic below to learn how to set up and use Pixy.",
+      "Pixy works alongside your existing Discord ticket system and can support both channel-based tickets and ticket threads.",
       "",
-      "For a new server, start with **Quick Start**, connect a guild-owned Groq API key, and review **Plans & Billing**.",
+      "New servers should start with `/pixy-setup`. After onboarding, use `/pixy-settings` for behavior, knowledge, safety, and exclusions.",
     ].join("\n"))
     .addFields({
-      name: "Recommended setup order",
-      value: "`/pixy-setup` → `/pixy-settings` → **AI API** → `/pixy-billing` → **Features**",
+      name: "Recommended flow",
+      value: "`/pixy-setup` → test a ticket → `/pixy-settings` → `/pixy-billing`",
     });
   return panel(embed, userId);
 }
@@ -138,60 +146,97 @@ function quickStart(userId) {
   const embed = new EmbedBuilder()
     .setTitle("🚀 Quick Start")
     .setColor(0x57f287)
-    .setDescription("Follow these steps in order to get Pixy replying inside your ticket channels.")
+    .setDescription("The first `/pixy-setup` is a guided three-step onboarding flow.")
     .addFields(
       {
-        name: "1. Choose the ticket category",
-        value: "Run `/pixy-setup` as a server administrator and select the category that contains your ticket channels. The first successful setup starts the one-time seven-day Trial.",
+        name: "1. Ticket Sources",
+        value: [
+          "Add every place where your ticket system creates tickets.",
+          "Use **Categories** for normal ticket channels and **Thread Parents** for tickets created as threads.",
+          "You can configure multiple sources of both types before continuing.",
+        ].join("\n"),
       },
       {
-        name: "2. Connect Groq",
-        value: "Open `/pixy-settings` → **AI API** → **Set API Key**, then paste your server's Groq API key. Groq usage and limits belong to the guild.",
+        name: "2. AI Provider",
+        value: [
+          "Groq is the currently available provider.",
+          "Add the server's API key in `/pixy-setup`; Pixy validates it, encrypts it, and never displays the stored secret again.",
+          "The default model works immediately, or you can verify and choose another model before pressing Next.",
+        ].join("\n"),
       },
       {
-        name: "3. Review billing",
-        value: "Run `/pixy-billing` to see the effective plan, remaining time, feature availability, and manual activation options.",
+        name: "3. Human Support",
+        value: "Configure an escalation category and at least one support role route, or choose **Skip for Now**. Human Support is recommended but optional.",
       },
       {
-        name: "4. Review features",
-        value: "Open **Features** in `/pixy-settings` and enable only the replies and ticket actions you want Pixy to perform.",
+        name: "When the Trial starts",
+        value: "The one-time seven-day Trial starts only when onboarding is successfully completed, not when the first Ticket Source is selected.",
       },
       {
-        name: "5. Test in a ticket",
-        value: "Send a normal support question inside a channel under the configured ticket category.",
+        name: "After setup",
+        value: "Re-running `/pixy-setup` opens the editable Setup Dashboard. Use `/pixy-settings` for secondary behavior and server content.",
       }
     );
   return panel(embed, userId);
 }
 
-function groq(userId) {
+function sources(userId) {
   const embed = new EmbedBuilder()
-    .setTitle("🔑 Groq API Key")
-    .setColor(0xfee75c)
-    .setDescription("Each server connects and pays for its own Groq API usage. Pixy does not provide a shared key or quota.")
+    .setTitle("🧵 Ticket Sources & Threads")
+    .setColor(0x5865f2)
+    .setDescription("Ticket Sources tell Pixy exactly where ticket conversations may exist.")
     .addFields(
       {
-        name: "Create a key",
-        value: [
-          "1. Open the official **Groq API Keys** page below.",
-          "2. Sign in or create a Groq account.",
-          "3. Select **Create API Key** and give it a recognizable name.",
-          "4. Copy the secret immediately and keep it private.",
-        ].join("\n"),
+        name: "Category source",
+        value: "Tracks normal text ticket channels created directly inside that Discord category.",
       },
       {
-        name: "Connect it to Pixy",
-        value: "Run `/pixy-settings` → **AI API** → **Set API Key**, then paste the key into the private modal.",
+        name: "Thread Parent source",
+        value: "Tracks ticket threads created directly under a configured text, announcement, forum, or media channel.",
       },
       {
-        name: "Storage and safety",
-        value: "Pixy validates and encrypts the key before storage and never displays the saved secret again. Never send it to a payment owner or support contact.",
+        name: "Thread lifecycle safety",
+        value: "Thread tickets always use **Smart Overlay**. Pixy can reply, pause/resume AI, and hand off to Human Support, but it will not close, rename, move, or delete the thread even if channel tickets use Full Ticket Control.",
+      },
+      {
+        name: "Private Threads",
+        value: "Pixy must be able to access the private thread. Prefer having the ticket system add Pixy to the thread instead of granting broad Manage Threads permission.",
+      },
+      {
+        name: "Excluded Tickets",
+        value: "Open `/pixy-settings` → **Excluded Tickets** to make Pixy ignore a specific tracked channel or thread without removing the whole Ticket Source.",
+      }
+    );
+  return panel(embed, userId);
+}
+
+function ai(userId) {
+  const embed = new EmbedBuilder()
+    .setTitle("🤖 AI Provider")
+    .setColor(0xfee75c)
+    .setDescription("Pixy's provider architecture is extensible, but Groq is the provider currently exposed in production setup.")
+    .addFields(
+      {
+        name: "Connect Groq",
+        value: "Run `/pixy-setup` → **AI Provider**. Add the guild-owned Groq API key in the private modal. Provider credentials are part of core setup, not `/pixy-settings`.",
+      },
+      {
+        name: "Credential storage",
+        value: "Pixy validates the credential before saving it encrypted. The stored secret is never displayed back to users.",
+      },
+      {
+        name: "Model selection",
+        value: "The provider default is ready after a valid credential is saved. **Change Model** verifies a model against the connected account before saving the override.",
+      },
+      {
+        name: "Usage",
+        value: "The guild supplies its own Groq credential and is responsible for the provider's usage limits and charges. Pixy does not provide a shared Groq quota.",
       }
     );
 
   const links = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setLabel("Create Groq API Key")
+      .setLabel("Groq API Keys")
       .setEmoji("🔑")
       .setStyle(ButtonStyle.Link)
       .setURL(GROQ_KEYS_URL),
@@ -212,23 +257,23 @@ function billing(userId) {
     .addFields(
       {
         name: "Trial",
-        value: "The first successful `/pixy-setup` starts one seven-day Pro Trial. Clearing configuration or reinviting Pixy does not restart it.",
+        value: "One seven-day premium Trial starts after the first completed onboarding. Resetting configuration or reinviting Pixy does not grant another Trial.",
       },
       {
         name: "Pro",
-        value: "Provides learned AI context, learned-knowledge additions, and validated ticket agent actions for the active period.",
+        value: "Adds learned AI context, new knowledge additions, and validated ticket agent actions for the active subscription period.",
       },
       {
         name: "Partner",
-        value: "Provides premium entitlement without an expiry. Any Trial or Pro dates remain stored underneath as the fallback state.",
+        value: "Provides premium entitlement without an expiry while preserving any stored Pro or Trial dates underneath as fallback state.",
       },
       {
         name: "Expired",
-        value: "Generic ticket AI replies and AI On/Off remain available. Learned AI context, new learned entries, and agent ticket actions are locked.",
+        value: "Generic AI replies and ticket AI On/Off remain available. Learned AI context, new knowledge additions, and agent ticket actions are locked.",
       },
       {
         name: "View or activate",
-        value: "Run `/pixy-billing`. PayPal and Vodafone Cash choices show a configured owner mention and manual DM instructions; do not send passwords, tokens, or API keys.",
+        value: "Run `/pixy-billing`. Payment options only provide manual contact instructions for the configured owner; never send passwords, tokens, API keys, or backup codes.",
       }
     );
   return panel(embed, userId);
@@ -236,32 +281,29 @@ function billing(userId) {
 
 function features(userId) {
   const embed = new EmbedBuilder()
-    .setTitle("🧩 Pixy Features")
+    .setTitle("🛡️ Features & Safety")
     .setColor(0x5865f2)
-    .setDescription("Server administrators can change stored preferences from `/pixy-settings`. Subscription gates are enforced separately at execution time.")
+    .setDescription("Secondary behavior and server content live in `/pixy-settings`.")
     .addFields(
       {
-        name: "🤖 Generic AI Reply",
-        value: "Available in every plan, including Expired, when the guild has configured its Groq key and enabled AI replies.",
-        inline: true,
+        name: "Ticket Behavior",
+        value: "Choose Smart Overlay or Full Ticket Control and manage AI Replies, Close, Rename, Human Escalation, and Agent Actions. Full Control must pass permission/setup preflight.",
       },
       {
-        name: "🧠 Learned context",
-        value: "Trial, Pro, and Partner can use learned Q&A/free-form entries in AI context and add new entries.",
-        inline: true,
+        name: "Knowledge",
+        value: "Add, list, delete, or clear guild-specific Q&A and free-form knowledge. New additions and AI knowledge context require premium entitlement.",
       },
       {
-        name: "🛠️ Agent actions",
-        value: "Trial, Pro, and Partner can use validated close, rename, and escalation actions when their feature toggles permit them.",
-        inline: true,
+        name: "Safety",
+        value: "Manage server-specific blocked terms and intentional allow exceptions for false positives.",
       },
       {
-        name: "Expired controls",
-        value: "Expired ticket controls show only AI On/Off. Existing learned entries can still be listed, deleted, or cleared.",
+        name: "Excluded Tickets",
+        value: "Exclude individual tracked channels or threads from Pixy, optionally with a private admin reason, then restore them later.",
       },
       {
         name: "Execution safety",
-        value: "Plan and feature availability are rechecked at execution time, so stale menus or modals cannot bypass expiration.",
+        value: "Plans, feature gates, thread lifecycle restrictions, and ticket state are rechecked when an action executes, so stale Discord components cannot bypass current rules.",
       }
     );
   return panel(embed, userId);
@@ -271,15 +313,28 @@ function commands(userId) {
   const embed = new EmbedBuilder()
     .setTitle("⌨️ Pixy Commands")
     .setColor(0x5865f2)
-    .setDescription("The main commands used to configure and manage Pixy.")
+    .setDescription("Pixy's public command surface is intentionally small.")
     .addFields(
-      { name: "/pixy-help", value: "Open this help center.", inline: true },
-      { name: "/pixy-setup", value: "Choose the ticket category and initialize the one-time Trial when no billing record exists.", inline: true },
-      { name: "/pixy-billing", value: "View plan status, dates, availability, and manual payment-owner instructions.", inline: true },
-      { name: "/pixy-settings", value: "Manage the Groq key, model, feature preferences, escalation status, and custom blocked words.", inline: true },
-      { name: "/pixy-learn", value: "Manage server-specific knowledge; additions require Trial, Pro, or Partner.", inline: true },
-      { name: "/pixy-admins", value: "Configure escalation roles, routing descriptions, categories, and notifications.", inline: true },
-      { name: "/pixy-clear", value: "Delete operational server data while retaining minimal billing continuity and audit records.", inline: true }
+      {
+        name: "/pixy-setup",
+        value: "First-run onboarding, then the Setup Dashboard for Ticket Sources, AI Provider, and Human Support.",
+      },
+      {
+        name: "/pixy-settings",
+        value: "Ticket Behavior, Knowledge, Safety, and Excluded Tickets.",
+      },
+      {
+        name: "/pixy-billing",
+        value: "Plan status, remaining time, capability availability, and manual activation/renewal instructions.",
+      },
+      {
+        name: "/pixy-help",
+        value: "Open this help center.",
+      },
+      {
+        name: "/pixy-reset",
+        value: "Administrator-only destructive reset of Pixy operational data. Billing continuity and audit records are retained.",
+      }
     );
   return panel(embed, userId);
 }
@@ -291,29 +346,37 @@ function troubleshooting(userId) {
     .setDescription("Check the section matching the problem you are seeing.")
     .addFields(
       {
-        name: "Pixy is not replying",
+        name: "Pixy is not replying in a channel ticket",
         value: [
-          "• Confirm `/pixy-setup` points to the correct ticket category.",
-          "• Confirm **AI Reply** is enabled in `/pixy-settings`.",
-          "• Confirm a valid guild-owned Groq API key is configured.",
-          "• Confirm the bot can view the channel, send messages, and read message history.",
+          "• Open `/pixy-setup` and confirm the channel's parent Category is an active Ticket Source.",
+          "• Confirm the AI Provider credential is configured and valid.",
+          "• Open `/pixy-settings` and confirm AI Replies are enabled.",
+          "• Confirm Pixy can View Channel, Send Messages, and Read Message History.",
         ].join("\n"),
       },
       {
-        name: "A learned addition or ticket action is locked",
-        value: "Run `/pixy-billing`. Expired mode intentionally blocks learned additions/context and agent actions while keeping generic AI replies available.",
+        name: "Pixy is not replying in a thread ticket",
+        value: [
+          "• Confirm the thread's direct parent is configured as a **Thread Parent** Ticket Source.",
+          "• Confirm Pixy can View Channel, Send Messages in Threads, and Read Message History on the parent.",
+          "• For a Private Thread, make sure Pixy has access to that specific thread.",
+        ].join("\n"),
       },
       {
-        name: "A premium action was rejected despite a visible old menu",
-        value: "Pixy rechecks entitlement at execution time. Refresh the panel or ticket controls after activation; stale components cannot bypass expiration.",
+        name: "Close or Rename is missing inside a thread",
+        value: "That is intentional. Thread tickets always use Smart Overlay and never expose Pixy lifecycle actions that close, rename, move, or delete the thread.",
       },
       {
-        name: "Groq rejected the key or model",
-        value: "Create a new key from the official Groq console or reset to a model available to that guild's Groq account.",
+        name: "Full Ticket Control will not enable",
+        value: "Pixy runs a preflight first. Fix the exact Ticket Source, Human Support, role, or Discord permission issues shown by `/pixy-settings`, then try again.",
       },
       {
-        name: "Rename, close, or escalation still fails",
-        value: "Confirm the guild has Trial, Pro, or Partner, the corresponding feature toggle is enabled, and Pixy has the Discord permissions required for the action.",
+        name: "A learned addition or agent action is locked",
+        value: "Run `/pixy-billing`. Expired mode keeps generic AI replies but blocks learned context/additions and premium agent actions.",
+      },
+      {
+        name: "Provider credential or model fails validation",
+        value: "Open `/pixy-setup` → **AI Provider**, replace the credential if needed, then use the default model or verify another model available to that account.",
       }
     );
   return panel(embed, userId);
@@ -321,7 +384,8 @@ function troubleshooting(userId) {
 
 function render(page, userId) {
   if (page === PAGES.QUICKSTART) return quickStart(userId);
-  if (page === PAGES.GROQ) return groq(userId);
+  if (page === PAGES.SOURCES) return sources(userId);
+  if (page === PAGES.AI) return ai(userId);
   if (page === PAGES.BILLING) return billing(userId);
   if (page === PAGES.FEATURES) return features(userId);
   if (page === PAGES.COMMANDS) return commands(userId);
@@ -329,7 +393,7 @@ function render(page, userId) {
   return home(userId);
 }
 
-module.exports = {
+const command = {
   data: new SlashCommandBuilder()
     .setName("help")
     .setDescription("Learn how to set up and use Pixy."),
@@ -352,8 +416,7 @@ module.exports = {
         if (!(await assertOwner(interaction, userId))) return;
         await interaction.deferUpdate();
         const selected = interaction.values[0];
-        const page = selected === "reset" ? PAGES.HOME : selected;
-        await interaction.editReply(render(page, userId));
+        await interaction.editReply(render(selected || PAGES.HOME, userId));
       },
     },
   ],
@@ -384,3 +447,18 @@ module.exports = {
     },
   ],
 };
+
+module.exports = Object.assign(command, {
+  PAGES,
+  PREFIX,
+  TOPICS,
+  ai,
+  billing,
+  commands,
+  features,
+  home,
+  quickStart,
+  render,
+  sources,
+  troubleshooting,
+});
