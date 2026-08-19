@@ -31,8 +31,11 @@ function clampPageSize(value) {
 
 async function getKnowledgeOverview(guildId, options = {}) {
   const client = options.client || prisma;
-  const config = await ensureGuildConfig(guildId, { client });
-  const [total, qna, freeform] = await Promise.all([
+  const [config, total, qna, freeform] = await Promise.all([
+    client.guildConfig.findUnique({
+      where: { guildId },
+      select: { maxLearnedItems: true },
+    }),
     client.learnedAnswer.count({ where: { guildId } }),
     client.learnedAnswer.count({ where: { guildId, type: KNOWLEDGE_TYPE_QNA } }),
     client.learnedAnswer.count({ where: { guildId, type: KNOWLEDGE_TYPE_FREEFORM } }),
@@ -43,6 +46,7 @@ async function getKnowledgeOverview(guildId, options = {}) {
     qna,
     freeform,
     limit: getKnowledgeLimit(config),
+    configured: Boolean(config),
   };
 }
 
@@ -179,7 +183,6 @@ async function deleteKnowledgeItem(guildId, itemId, options = {}) {
 
 async function clearKnowledge(guildId, options = {}) {
   const client = options.client || prisma;
-  await ensureGuildConfig(guildId, { client });
   const result = await client.learnedAnswer.deleteMany({ where: { guildId } });
   return { ok: true, deleted: Number(result?.count || 0) };
 }
