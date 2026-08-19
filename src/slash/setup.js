@@ -69,17 +69,25 @@ function categorySelectPayload(userId) {
 
 async function saveCategory(guildId, categoryId, options = {}) {
   const client = options.client || prisma;
-  const config = await client.guildConfig.upsert({
-    where: { guildId },
-    create: { guildId, ticketCategoryId: categoryId, enabled: true, maxLearnedItems: 50 },
-    update: { ticketCategoryId: categoryId, enabled: true },
-  });
 
-  if (client.ticketSource?.deleteMany && client.ticketSource?.upsert) {
-    await replaceCategoryTicketSources(guildId, [categoryId], { client });
+  const execute = async (tx) => {
+    const config = await tx.guildConfig.upsert({
+      where: { guildId },
+      create: { guildId, ticketCategoryId: categoryId, enabled: true, maxLearnedItems: 50 },
+      update: { ticketCategoryId: categoryId, enabled: true },
+    });
+
+    if (tx.ticketSource?.deleteMany && tx.ticketSource?.upsert) {
+      await replaceCategoryTicketSources(guildId, [categoryId], { client: tx });
+    }
+
+    return config;
+  };
+
+  if (typeof client.$transaction === "function") {
+    return client.$transaction(async (tx) => execute(tx));
   }
-
-  return config;
+  return execute(client);
 }
 
 async function saveCategoryAndStartTrial(guildId, categoryId, options = {}) {
