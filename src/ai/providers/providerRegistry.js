@@ -2,6 +2,9 @@ const { googleProvider } = require("./googleProvider");
 const { groqProvider } = require("./groqProvider");
 const { mistralProvider } = require("./mistralProvider");
 
+const PROVIDER_VALIDATION_PROMPT = "Hello";
+const PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS = 16;
+
 function normalizeProviderId(value) {
   const id = String(value || "").trim().toLowerCase();
   if (!id) throw new TypeError("An AI provider ID is required.");
@@ -104,32 +107,119 @@ function listAiProviders() {
   return providerRegistry.list();
 }
 
-async function validateProviderCredential(providerId, credential) {
-  const provider = getAiProvider(providerId);
-  if (provider.requiresCredential && !String(credential || "").trim()) {
+function createEmptyValidationResponseError(provider, modelId) {
+  const error = new Error(
+    `${provider.displayName} accepted the request but returned an empty live test response.`
+  );
+  error.code = "provider_validation_empty_response";
+  error.provider = provider.id;
+  error.model = modelId;
+  return error;
+}
+
+async function probeProviderGeneration(provider, {
+  credential,
+  modelId,
+  messages,
+} = {}) {
+  if (!provider || typeof provider.generateReply !== "function") {
+    throw new TypeError("A valid AI provider definition is required for a live validation probe.");
+  }
+
+  const selectedModel = String(modelId || provider.defaultModel || "").trim();
+  const probeMessages = Array.isArray(messages) && messages.length
+    ? messages
+    : [{ role: "user", content: PROVIDER_VALIDATION_PROMPT }];
+
+  const result = await provider.generateReply({
+    messages: probeMessages,
+    model: selectedModel,
+    credential,
+    generation: {
+      temperature: 0,
+      maxOutputTokens: PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
+    },
+  });
+
+  const text = String(result?.text || "").trim();
+  if (!text) throw createEmptyValidationResponseError(provider, selectedModel);
+
+  return {
+    valid: true,
+    liveGeneration: true,
+    provider: result?.provider || provider.id,
+    model: result?.model || selectedModel,
+    text,
+    usage: result?.usage || null,
+  };
+}
+
+async function validateProviderCredential(providerId, credential, options = {}) {
+  const resolveProvider = options.providerResolver || getAiProvider;
+  const provider = resolveProvider(providerId);
+  const normalizedCredential = String(credential || "").trim();
+
+  if (provider.requiresCredential && !normalizedCredential) {
     const error = new Error(`${provider.displayName} requires a credential.`);
     error.code = "provider_credential_required";
     error.provider = provider.id;
     throw error;
   }
-  if (typeof provider.validateCredential !== "function") {
-    return { valid: true };
-  }
-  return provider.validateCredential(credential);
+
+  const basicValidation = typeof provider.validateCredential === "function"
+    ? await provider.validateCredential(normalizedCredential)
+    : { valid: true };
+
+  const liveProbe = await probeProviderGeneration(provider, {
+    credential: normalizedCredential,
+    modelId: options.modelId || provider.defaultModel,
+    messages: options.messages,
+  });
+
+  return {
+    ...(basicValidation && typeof basicValidation === "object"
+      ? basicValidation
+      : { valid: basicValidation !== false }),
+    valid: true,
+    liveGeneration: true,
+    probe: liveProbe,
+  };
 }
 
-async function validateProviderModel(providerId, { credential, modelId } = {}) {
-  const provider = getAiProvider(providerId);
+async function validateProviderModel(providerId, {
+  credential,
+  modelId,
+  providerResolver,
+  messages,
+} = {}) {
+  const resolveProvider = providerResolver || getAiProvider;
+  const provider = resolveProvider(providerId);
   const normalizedModel = String(modelId || "").trim();
   if (!normalizedModel) {
     const error = new Error("A model ID is required.");
     error.code = "model_required";
     throw error;
   }
-  if (typeof provider.validateModel !== "function") {
-    return { id: normalizedModel, compatible: true };
-  }
-  return provider.validateModel({ credential, modelId: normalizedModel });
+
+  const basicValidation = typeof provider.validateModel === "function"
+    ? await provider.validateModel({ credential, modelId: normalizedModel })
+    : { id: normalizedModel, compatible: true };
+
+  const liveProbe = await probeProviderGeneration(provider, {
+    credential,
+    modelId: normalizedModel,
+    messages,
+  });
+
+  return {
+    ...(basicValidation && typeof basicValidation === "object"
+      ? basicValidation
+      : { id: normalizedModel, compatible: basicValidation !== false }),
+    id: basicValidation?.id || normalizedModel,
+    compatible: true,
+    liveGeneration: true,
+    probe: liveProbe,
+  };
 }
 
 async function listProviderModelOptions(providerId, credential) {
@@ -156,12 +246,15 @@ async function listProviderModelOptions(providerId, credential) {
 }
 
 module.exports = {
+  PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
+  PROVIDER_VALIDATION_PROMPT,
   createProviderRegistry,
   getAiProvider,
   listAiProviders,
   listProviderModelOptions,
   normalizeProviderDefinition,
   normalizeProviderId,
+  probeProviderGeneration,
   providerRegistry,
   validateProviderCredential,
   validateProviderModel,
