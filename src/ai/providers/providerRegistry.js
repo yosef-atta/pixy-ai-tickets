@@ -3,7 +3,8 @@ const { groqProvider } = require("./groqProvider");
 const { mistralProvider } = require("./mistralProvider");
 
 const PROVIDER_VALIDATION_PROMPT = "Hello";
-const PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS = 16;
+const PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS = 128;
+const PROVIDER_VALIDATION_RETRY_OUTPUT_TOKENS = 512;
 
 function normalizeProviderId(value) {
   const id = String(value || "").trim().toLowerCase();
@@ -117,6 +118,24 @@ function createEmptyValidationResponseError(provider, modelId) {
   return error;
 }
 
+async function runProviderProbe(provider, {
+  credential,
+  modelId,
+  messages,
+  maxOutputTokens,
+} = {}) {
+  return provider.generateReply({
+    messages,
+    model: modelId,
+    credential,
+    validationProbe: true,
+    generation: {
+      temperature: 0,
+      maxOutputTokens,
+    },
+  });
+}
+
 async function probeProviderGeneration(provider, {
   credential,
   modelId,
@@ -131,17 +150,31 @@ async function probeProviderGeneration(provider, {
     ? messages
     : [{ role: "user", content: PROVIDER_VALIDATION_PROMPT }];
 
-  const result = await provider.generateReply({
-    messages: probeMessages,
-    model: selectedModel,
+  let result = await runProviderProbe(provider, {
     credential,
-    generation: {
-      temperature: 0,
-      maxOutputTokens: PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
-    },
+    modelId: selectedModel,
+    messages: probeMessages,
+    maxOutputTokens: PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
   });
 
-  const text = String(result?.text || "").trim();
+  let text = String(result?.text || "").trim();
+  let retried = false;
+
+  // Some reasoning models can spend a very small completion budget entirely
+  // on internal reasoning and return an empty assistant content field even
+  // though the credential/model are healthy. Retry once with a larger budget
+  // before treating an empty response as a failed live validation.
+  if (!text) {
+    retried = true;
+    result = await runProviderProbe(provider, {
+      credential,
+      modelId: selectedModel,
+      messages: probeMessages,
+      maxOutputTokens: PROVIDER_VALIDATION_RETRY_OUTPUT_TOKENS,
+    });
+    text = String(result?.text || "").trim();
+  }
+
   if (!text) throw createEmptyValidationResponseError(provider, selectedModel);
 
   return {
@@ -151,6 +184,7 @@ async function probeProviderGeneration(provider, {
     model: result?.model || selectedModel,
     text,
     usage: result?.usage || null,
+    retried,
   };
 }
 
@@ -248,6 +282,7 @@ async function listProviderModelOptions(providerId, credential) {
 module.exports = {
   PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
   PROVIDER_VALIDATION_PROMPT,
+  PROVIDER_VALIDATION_RETRY_OUTPUT_TOKENS,
   createProviderRegistry,
   getAiProvider,
   listAiProviders,
