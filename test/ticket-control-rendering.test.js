@@ -60,14 +60,26 @@ test("expired renders only AI On/Off without disabled premium choices or reset",
 
 test("new ticket tracking renders controls from the current effective plan", async () => {
   let sentPayload = null;
-  let upserted = false;
+  let createdData = null;
   const client = {
     guildConfig: {
       async findUnique() {
         return {
+          guildId: "guild-1",
           enabled: true,
           ticketCategoryId: "category-1",
         };
+      },
+    },
+    ticketSource: {
+      async findMany() {
+        return [{
+          id: "source-1",
+          guildId: "guild-1",
+          type: "category",
+          sourceId: "category-1",
+          enabled: true,
+        }];
       },
     },
     guildIgnoredChannel: {
@@ -76,8 +88,16 @@ test("new ticket tracking renders controls from the current effective plan", asy
       },
     },
     ticketChannel: {
-      async upsert() {
-        upserted = true;
+      async findUnique() {
+        return null;
+      },
+      async create({ data }) {
+        createdData = data;
+        return {
+          id: "ticket-1",
+          escalated: false,
+          ...data,
+        };
       },
     },
   };
@@ -88,22 +108,29 @@ test("new ticket tracking renders controls from the current effective plan", asy
     guild: { id: "guild-1" },
     async send(payload) {
       sentPayload = payload;
+      return { id: "control-1" };
     },
   };
 
   const result = await trackTicketChannel(channel, {
     client,
-    async loadEntitlement() {
-      return {
-        plan: BILLING_PLANS.EXPIRED,
-        premiumEntitled: false,
-      };
+    entitlement: {
+      plan: BILLING_PLANS.EXPIRED,
+      premiumEntitled: false,
     },
+    settings: null,
   });
 
   assert.equal(result.tracked, true);
-  assert.equal(result.plan, BILLING_PLANS.EXPIRED);
-  assert.equal(upserted, true);
+  assert.equal(result.created, true);
+  assert.equal(result.source.sourceId, "category-1");
+  assert.deepEqual(createdData, {
+    guildId: "guild-1",
+    channelId: "channel-1",
+    closed: false,
+    status: "open",
+    aiEnabled: true,
+  });
   assert.deepEqual(optionValues(sentPayload), ["ai_off"]);
 });
 

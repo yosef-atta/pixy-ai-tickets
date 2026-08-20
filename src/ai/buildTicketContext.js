@@ -1,5 +1,9 @@
 const { aiConfig } = require("../config/ai");
 const { prisma } = require("../config/prisma");
+const {
+  DEFAULT_MAX_ADMIN_ROUTES,
+  DEFAULT_MAX_LEARNED_ITEMS,
+} = require("../config/productDefaults");
 
 const KNOWLEDGE_TYPE_QNA = "qna";
 const KNOWLEDGE_TYPE_FREEFORM = "freeform";
@@ -52,7 +56,16 @@ async function getLearnedKnowledge(guildId, options = {}) {
       },
     });
 
-    const take = Math.max(1, Math.min(Number(config?.maxLearnedItems || 20), 100));
+    const configuredLimit = Number(
+      config?.maxLearnedItems ?? DEFAULT_MAX_LEARNED_ITEMS
+    );
+    if (!Number.isFinite(configuredLimit) || configuredLimit <= 0) {
+      return {
+        learnedQna: [],
+        learnedFreeform: [],
+      };
+    }
+    const take = Math.min(Math.floor(configuredLimit), 100);
 
     const items = await client.learnedAnswer.findMany({
       where: {
@@ -101,9 +114,12 @@ async function getAdminRoutes(guild, options = {}) {
       },
     });
 
+    const configuredLimit = Number(
+      config?.maxAdminRoutes ?? aiConfig.maxAdminRoutesPerGuild ?? DEFAULT_MAX_ADMIN_ROUTES
+    );
     const take = Math.max(
       1,
-      Math.min(Number(config?.maxAdminRoutes || aiConfig.maxAdminRoutesPerGuild || 10), 25)
+      Math.min(Number.isFinite(configuredLimit) ? Math.floor(configuredLimit) : DEFAULT_MAX_ADMIN_ROUTES, 25)
     );
 
     const routes = await client.adminRoute.findMany({

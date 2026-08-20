@@ -1,10 +1,10 @@
 # Pixy Privacy Policy
 
-**Last updated: August 1, 2026**
+**Last updated: August 19, 2026**
 
 This Privacy Policy explains how **Pixy** (the “Bot”, “Pixy”, “we”, or “us”) collects, processes, stores, retains, and shares information when it is added to or used in a Discord server.
 
-Pixy is a Discord ticket assistant that provides AI-assisted replies, guild-specific knowledge, validated ticket actions, escalation tools, administrative settings, manual billing states, and related diagnostics.
+Pixy is a Discord ticket assistant that provides AI-assisted replies, guild-specific knowledge, validated ticket actions, safe human escalation, administrative settings, manual billing states, and related diagnostics. Pixy can operate in configured ticket channels and ticket threads.
 
 By adding or using Pixy, you acknowledge the practices described in this Privacy Policy.
 
@@ -12,32 +12,34 @@ By adding or using Pixy, you acknowledge the practices described in this Privacy
 
 ### Discord identifiers
 
-Pixy may process Discord server (guild), channel, category, role, message, and user IDs when needed to associate configuration, tickets, commands, billing administration, and diagnostics with the correct Discord objects.
+Pixy may process Discord server (guild), channel, category, thread, thread-parent, role, message, and user IDs when needed to associate configuration, ticket conversations, commands, billing administration, and diagnostics with the correct Discord objects.
 
 ### Server configuration
 
-Pixy may store configuration selected by server administrators, including ticket categories, escalation routes, enabled or disabled feature preferences, selected AI model, ignored channels, custom blocked or allowed terms, and related routing settings.
+Pixy may store configuration selected by server administrators, including Ticket Sources, Category IDs, Thread Parent IDs, escalation routes, enabled or disabled feature preferences, selected AI provider/model, excluded ticket channels or threads, custom blocked or allowed terms, and related routing settings.
 
 ### Server-provided knowledge
 
-Pixy may store questions and answers, free-form knowledge, titles, and supporting content intentionally submitted by server administrators. Administrators are responsible for ensuring this content is appropriate and does not contain secrets or unnecessary personal information.
+Pixy may store questions and answers, free-form knowledge, titles, and supporting content intentionally submitted by server administrators. Knowledge entries are used as reusable AI context and are not limited to exact question matching. Administrators are responsible for ensuring this content is appropriate and does not contain secrets or unnecessary personal information.
 
 ### Ticket and AI usage information
 
-Pixy may store ticket identifiers, status and timestamps, optional ticket user IDs, action status, escalation details, rename or close activity, AI provider/model names, token counts when available, request status, and troubleshooting errors.
+Pixy may store ticket channel/thread identifiers, status and timestamps, optional ticket user IDs, action status, escalation details, rename or close activity where supported, AI provider/model names, token counts when available, request status, and troubleshooting errors.
 
-When AI features are enabled, Pixy may read and temporarily process relevant message content from configured ticket channels. Relevant ticket context and eligible server-provided knowledge may be sent to the guild-selected Groq model using the guild's configured credential.
+When AI features are enabled, Pixy may read and temporarily process relevant message content from configured ticket channels or ticket threads. Relevant ticket context and eligible server-provided knowledge may be sent to the guild-selected AI provider using that guild's configured credential.
 
-### Guild-provided Groq credentials and usage
+Thread tickets use Pixy's non-destructive Smart Overlay behavior for lifecycle safety. Pixy may still store thread ticket state, AI pause/resume state, and human-escalation state needed to operate the assistant.
 
-A server administrator may provide a Groq API key for the server's AI requests.
+### Guild-provided AI provider credentials and usage
+
+A server administrator may provide an AI provider credential for the server's AI requests. Pixy currently exposes **Groq**, **Google Gemini**, and **Mistral** as selectable AI providers.
 
 - The credential is encrypted before database storage.
 - It is decrypted only when required for an authorized request.
-- The guild owns and is responsible for its Groq account, usage, limits, and charges.
-- Pixy does not provide shared Groq quota.
+- The guild owns and is responsible for its provider account, usage, limits, and charges.
+- Pixy does not provide a shared AI-provider quota.
 
-Server administrators must not submit Groq keys in ordinary ticket messages, learned knowledge, public channels, payment messages, or support requests.
+Server administrators must not submit provider API keys in ordinary ticket messages, learned knowledge, public channels, payment messages, or support requests.
 
 ### Billing state and dates
 
@@ -62,7 +64,7 @@ Pixy may store billing audit events containing:
 - Non-secret metadata describing the state transition
 - Event timestamp
 
-Billing events support operational accountability, troubleshooting, continuity, and abuse prevention. They must not contain payment credentials, passwords, Discord tokens, Groq API keys, or other secrets.
+Billing events support operational accountability, troubleshooting, continuity, and abuse prevention. They must not contain payment credentials, passwords, Discord tokens, provider API keys, or other secrets.
 
 ### Owner and payment-contact IDs
 
@@ -80,7 +82,7 @@ Pixy does not intentionally request or store:
 
 - Discord account passwords
 - Discord user or bot tokens
-- Groq API keys in billing events or payment instructions
+- AI provider API keys in billing events or payment instructions
 - Payment card numbers or security codes
 - Bank account credentials
 - PayPal passwords, access tokens, or account credentials
@@ -96,15 +98,16 @@ Do not submit passwords, tokens, private API keys, payment details, backup codes
 
 Pixy processes information to:
 
-- Provide AI-assisted ticket replies
-- Apply server-specific configuration and eligible knowledge
+- Provide AI-assisted ticket replies in eligible channels and threads
+- Apply server-specific Ticket Sources, configuration, and eligible knowledge
 - Manage ticket state and validated actions
+- Provide safe Smart Overlay behavior for ticket threads
 - Route and escalate support requests
 - Enforce feature and subscription availability
 - Display billing status and manual contact instructions
 - Maintain Trial, Pro, and Partner continuity
 - Audit owner billing changes
-- Prevent repeated Trial grants after clear, removal, or reinvitation
+- Prevent repeated Trial grants after reset, removal, or reinvitation
 - Diagnose errors and measure AI usage
 - Protect the reliability and security of the service
 - Respond to deletion, support, or privacy requests
@@ -117,9 +120,9 @@ Pixy does not sell personal information or use stored server data for advertisin
 
 Pixy receives Discord data through the Discord API. Discord independently controls data stored on its platform, and Discord's terms and privacy policy apply.
 
-### Groq
+### AI providers
 
-When a guild requests an AI response, relevant ticket context and eligible server-provided knowledge may be sent to Groq using that guild's API key. Groq processes the request according to its own policies. Administrators should review those policies before enabling AI features.
+When a guild requests an AI response, relevant ticket context and eligible server-provided knowledge may be sent to the configured AI provider using that guild's credential. Pixy currently supports Groq, Google Gemini, and Mistral in server setup. The selected provider processes requests according to its own policies, which administrators should review before enabling AI features.
 
 ### Hosting and database providers
 
@@ -133,7 +136,7 @@ A guild administrator may independently contact a configured Pixy owner to discu
 
 Information may be shared only when reasonably necessary to:
 
-- Operate Pixy through Discord, Groq, and hosting infrastructure
+- Operate Pixy through Discord, the configured AI provider, and hosting infrastructure
 - Complete manual support or billing administration requested by an authorized guild administrator
 - Comply with applicable law, legal process, or a valid government request
 - Investigate abuse, security incidents, or threats
@@ -147,47 +150,51 @@ Pixy separates operational guild data from minimal billing continuity data.
 
 ### Operational data
 
-Server administrators can delete operational data with:
+Server administrators can reset operational data with:
 
 ```text
-/pixy-clear
+/pixy-reset
 ```
 
 Removing Pixy from a guild also triggers deletion of operational data. Operational deletion includes, as applicable:
 
-- Server configuration
+- Server configuration and setup state
+- Ticket Sources, including Category and Thread Parent IDs
 - Learned knowledge
-- Ticket records
+- Tracked channel/thread ticket records
 - Routing and escalation settings
-- Ignored-channel records
+- Excluded-ticket records
 - Custom blocked or allowed terms
-- Encrypted Groq credentials
+- Encrypted AI provider credentials
 - AI usage diagnostics associated with the guild
+
+Discord channels, threads, categories, roles, and messages stored by Discord are not deleted merely because Pixy's database records are reset.
 
 ### Retained billing continuity data
 
-`/pixy-clear` and guild removal intentionally retain:
+`/pixy-reset` and guild removal intentionally retain:
 
 - `GuildBilling` Trial, Pro, and Partner state/dates
 - `BillingEvent` audit records and actor IDs
 
-This minimal retention is used for entitlement continuity, billing audit, support, and Trial abuse prevention by preventing repeat Trials after clearing configuration, removing Pixy, reinviting it, or running setup again. An active Pro or Partner entitlement can therefore remain available after reinvitation and reconfiguration.
+This minimal retention is used for entitlement continuity, billing audit, support, and Trial-abuse prevention by preventing repeat Trials after resetting configuration, removing Pixy, reinviting it, or running setup again. An active Pro or Partner entitlement can therefore remain available after reinvitation and reconfiguration.
 
-A complete operator-level database reset may delete these retained records. Such a reset is separate from `/pixy-clear` and guild removal.
+A complete operator-level database reset may delete these retained records. Such a reset is separate from `/pixy-reset` and guild removal.
 
-Data may remain temporarily in operational backups until those backups are overwritten or securely deleted. Discord messages stored by Discord are not deleted merely because Pixy's database records are deleted.
+Data may remain temporarily in operational backups until those backups are overwritten or securely deleted.
 
 ## 7. Administrator and user controls
 
 Discord server administrators can:
 
-- Change Pixy's server configuration
-- Add, list, delete, or clear learned information subject to plan availability
-- Replace or remove the guild's Groq credential
+- Manage Ticket Sources, AI Provider configuration, and Human Support through `/pixy-setup`
+- Change ticket behavior, Knowledge, Safety, and Excluded Tickets through `/pixy-settings`
+- Add, quick-import, list, delete, or clear learned information subject to plan availability
+- Replace or remove the guild's saved AI provider credential
 - Disable individual AI and ticket feature preferences
-- Exclude channels from AI processing
+- Exclude individual tracked channels or threads from AI processing
 - View plan status and dates with `/pixy-billing`
-- Delete operational guild data with `/pixy-clear`
+- Reset operational guild data with `/pixy-reset`
 - Remove Pixy from the guild
 
 Billing continuity or audit deletion requests may require contacting the Pixy operator and verifying authority over the relevant guild, because those records are intentionally retained for continuity and abuse prevention.
@@ -196,7 +203,7 @@ An individual Discord user with a privacy or deletion concern should first conta
 
 ## 8. Security
 
-Pixy uses reasonable safeguards intended to protect stored information. These include encrypted storage of guild-provided Groq credentials, restricted access to production secrets, owner-only command authorization, transactional billing updates, sanitized billing output, and disabled Discord mentions in owner responses.
+Pixy uses reasonable safeguards intended to protect stored information. These include encrypted storage of guild-provided AI credentials, restricted access to production secrets, owner-only command authorization, transactional billing updates, sanitized billing output, execution-time plan/feature checks, Thread lifecycle restrictions, and disabled Discord mentions in sensitive automated output.
 
 No online service, database, or transmission method can be guaranteed completely secure. Administrators should avoid submitting unnecessary personal information and immediately rotate any exposed credential.
 
@@ -206,7 +213,7 @@ Pixy is not intended for anyone who is not permitted to use Discord under Discor
 
 ## 10. International processing
 
-Discord, Groq, payment providers selected by users, and hosting providers may process information in countries different from the user's country. Their own policies govern their processing locations and safeguards.
+Discord, configured AI providers, payment providers selected by users, and hosting providers may process information in countries different from the user's country. Their own policies govern their processing locations and safeguards.
 
 ## 11. Changes to this policy
 
@@ -220,4 +227,4 @@ For privacy questions, deletion requests, billing-record questions, or security 
 - Discord account: **usf.exe** — User ID: `1363512743667302653`
 - The project owner's GitHub profile: **https://github.com/riku-rio**
 
-When contacting the operator about guild data, include the relevant Discord guild ID and enough information to verify that you are authorized to act for that guild. Never include Discord tokens, Groq API keys, passwords, encryption keys, payment credentials, wallet PINs, or other secrets.
+When contacting the operator about guild data, include the relevant Discord guild ID and enough information to verify that you are authorized to act for that guild. Never include Discord tokens, AI provider API keys, passwords, encryption keys, payment credentials, wallet PINs, or other secrets.

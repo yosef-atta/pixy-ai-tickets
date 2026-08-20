@@ -1,0 +1,72 @@
+name: Pixy CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pixy-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node 20 / MySQL 8.4
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: pixy_test
+          MYSQL_USER: pixy
+          MYSQL_PASSWORD: pixy_test_password
+          MYSQL_ROOT_PASSWORD: pixy_root_test_password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -upixy -ppixy_test_password --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      NODE_ENV: test
+      TEST_DATABASE_URL: mysql://pixy:pixy_test_password@127.0.0.1:3307/pixy_test
+      DATABASE_URL: mysql://pixy:pixy_test_password@127.0.0.1:3307/pixy_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Release preflight
+        run: npm run check
+
+      - name: Full test suite
+        shell: bash
+        run: |
+          set +e
+          npm test > test-output.log 2>&1
+          status=$?
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            echo "Full test suite failed. Showing focused failure output:"
+            grep -E -B 2 -A 22 'not ok|failureType:|error:|# tests |# pass |# fail ' test-output.log || true
+            exit "$status"
+          fi
+
+          echo "Full test suite passed."
+          tail -n 12 test-output.log

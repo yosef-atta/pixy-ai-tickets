@@ -1,3 +1,5 @@
+const { PermissionFlagsBits } = require("discord.js");
+
 const { prisma } = require("../../../config/prisma");
 const { aiConfig } = require("../../../config/ai");
 const { TICKET_ACTIONS } = require("./ticketActionTypes");
@@ -8,11 +10,20 @@ const {
 const {
   getOrCreateEscalationNotificationChannel,
   sendEscalationNotification,
-  canMentionRoleInChannel,
 } = require("../escalationNotifications");
+const {
+  preflightFullControlForTicket,
+} = require("../humanSupportPermissions");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const limitReplyText = (text) => String(text || "").trim().slice(0, Math.max(1, Number(aiConfig.actionMaxReplyChars || 1000)));
+
+function createActionError(code, message, details = {}) {
+  const error = new Error(message || code);
+  error.code = code;
+  Object.assign(error, details);
+  return error;
+}
 
 async function sendActionReply(message, text) {
   const content = limitReplyText(text);
@@ -62,14 +73,178 @@ async function executeRenameTicket({ message, validation }) {
   return { ok: true, replySent: false, channelDeleted: false };
 }
 
+function snapshotRoleAccessOverwrite(overwrite) {
+  if (!overwrite) return null;
+  const tracked = [
+    ["ViewChannel", PermissionFlagsBits.ViewChannel],
+    ["SendMessages", PermissionFlagsBits.SendMessages],
+    ["ReadMessageHistory", PermissionFlagsBits.ReadMessageHistory],
+  ];
+  const snapshot = {};
+  for (const [name, flag] of tracked) {
+    if (overwrite.allow?.has(flag)) snapshot[name] = true;
+    else if (overwrite.deny?.has(flag)) snapshot[name] = false;
+    else snapshot[name] = null;
+  }
+  return snapshot;
+}
+
+function captureFullControlEscalationState(message, role) {
+  const originalOverwrite = message.channel.permissionOverwrites.cache.get(role.id) || null;
+  return {
+    originalParentId: message.channel.parentId,
+    originalName: message.channel.name,
+    roleOverwriteCreated: !originalOverwrite,
+    originalRoleAccess: snapshotRoleAccessOverwrite(originalOverwrite),
+  };
+}
+
+async function applyFullControlEscalation({ message, role, categoryId, name, auditReason }) {
+  const state = captureFullControlEscalationState(message, role);
+
+  try {
+    await message.channel.permissionOverwrites.edit(
+      role,
+      { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
+      { reason: auditReason }
+    );
+
+    if (message.channel.parentId !== categoryId) {
+      await message.channel.setParent(categoryId, {
+        lockPermissions: false,
+        reason: auditReason,
+      });
+    }
+
+    if (name && name !== message.channel.name) {
+      await message.channel.setName(name, auditReason);
+    }
+
+    return state;
+  } catch (error) {
+    error.pixyMutationState = state;
+    throw error;
+  }
+}
+
+async function rollbackFullControlEscalation({ message, role, state }) {
+  if (!state) return;
+
+  if (message.channel.name !== state.originalName) {
+    await message.channel
+      .setName(state.originalName, "Rollback failed Pixy escalation")
+      .catch(() => null);
+  }
+
+  if (
+    state.originalParentId &&
+    message.channel.parentId !== state.originalParentId
+  ) {
+    await message.channel
+      .setParent(state.originalParentId, {
+        lockPermissions: false,
+        reason: "Rollback failed Pixy escalation",
+      })
+      .catch(() => null);
+  }
+
+  if (state.roleOverwriteCreated) {
+    await message.channel.permissionOverwrites
+      .delete(role, "Rollback failed Pixy escalation")
+      .catch(() => null);
+  } else if (state.originalRoleAccess) {
+    await message.channel.permissionOverwrites
+      .edit(role, state.originalRoleAccess, {
+        reason: "Rollback failed Pixy escalation",
+      })
+      .catch(() => null);
+  }
+}
+
+async function persistEscalationState({
+  message,
+  roleId,
+  reason,
+  notificationMessage,
+}) {
+  return prisma.ticketChannel.update({
+    where: { channelId: message.channel.id },
+    data: {
+      escalated: true,
+      escalatedAt: new Date(),
+      escalatedRoleId: roleId,
+      escalationReason: reason || null,
+      escalationNotificationMessageId: notificationMessage.id,
+      aiEnabled: false,
+      lastAiAction: TICKET_ACTIONS.ESCALATE_TICKET,
+      lastAiActionAt: new Date(),
+      lastAiReplyAt: new Date(),
+    },
+  });
+}
+
+async function performOverlayHandoff({
+  actionRequest,
+  message,
+  role,
+  roleId,
+  roleName,
+  reason,
+  routeId,
+  notificationChannel,
+  settings,
+  notificationMessage = null,
+  degradationCode = null,
+}) {
+  const sentNotification = notificationMessage || await sendEscalationNotification({
+    notificationChannel,
+    ticketChannel: message.channel,
+    role,
+    reason,
+    routeId,
+    requestedBy: message.author,
+    newName: message.channel.name,
+    summary: actionRequest.data?.summary,
+  });
+
+  await persistEscalationState({
+    message,
+    roleId,
+    reason,
+    notificationMessage: sentNotification,
+  });
+
+  let replySent = false;
+  try {
+    replySent = await sendTicketEscalationReply({
+      message,
+      roleName: roleName || role.name,
+      text: buildOverlayHandoffReply(actionRequest, roleName || role.name),
+    });
+  } catch (error) {
+    console.error("Failed to send overlay handoff reply:", error);
+  }
+
+  await refreshEscalatedTicketControls(message.channel, settings).catch((error) => {
+    console.error("Failed to refresh ticket controls after escalation:", error);
+  });
+
+  return {
+    ok: true,
+    replySent,
+    channelDeleted: false,
+    fullControl: false,
+    degraded: Boolean(degradationCode),
+    degradationCode,
+    rolePinged: sentNotification.pixyRolePinged ?? null,
+  };
+}
+
 async function executeEscalateTicket({ actionRequest, message, validation }) {
   const { categoryId, roleId, reason, name, routeId, roleName } = validation.data;
   const auditReason = `Pixy AI safe action: escalate_ticket requested by ${message.author?.tag || "user"}`.slice(0, 512);
-  const originalParentId = message.channel.parentId;
-  const originalName = message.channel.name;
-  let roleOverwriteCreated = false;
 
-  const [config, role, settings] = await Promise.all([
+  const [config, role, settings, category] = await Promise.all([
     prisma.guildConfig.findUnique({
       where: { guildId: message.guild.id },
       select: { escalationNotificationChannelId: true },
@@ -78,90 +253,155 @@ async function executeEscalateTicket({ actionRequest, message, validation }) {
     prisma.guildSetting.findUnique({
       where: { guildId: message.guild.id },
     }),
+    message.guild.channels.fetch(categoryId).catch(() => null),
   ]);
-  if (!role) throw new Error("escalation_role_missing");
 
-  const fullControl = isFullTicketControlEnabled(settings);
+  if (!role) {
+    throw createActionError(
+      "escalation_role_missing",
+      "The configured support role no longer exists."
+    );
+  }
+  if (!category) {
+    throw createActionError(
+      "escalation_category_missing",
+      "The configured escalation category no longer exists."
+    );
+  }
+
   const notificationResult = await getOrCreateEscalationNotificationChannel({
     guild: message.guild,
     categoryId,
     existingChannelId: config?.escalationNotificationChannelId,
   });
-  if (!notificationResult.ok) throw new Error(notificationResult.code);
-  if (!(await canMentionRoleInChannel(notificationResult.channel, role))) {
-    throw new Error("missing_role_mention_permission_in_notification_channel");
+  if (!notificationResult.ok) {
+    throw createActionError(notificationResult.code, notificationResult.code);
   }
 
+  const common = {
+    actionRequest,
+    message,
+    role,
+    roleId,
+    roleName,
+    reason,
+    routeId,
+    notificationChannel: notificationResult.channel,
+    settings,
+  };
+
+  const fullControlRequested = isFullTicketControlEnabled(settings);
+  if (!fullControlRequested) {
+    return performOverlayHandoff(common);
+  }
+
+  const preflight = await preflightFullControlForTicket({
+    guild: message.guild,
+    ticketChannel: message.channel,
+    destinationCategory: category,
+  });
+
+  if (!preflight.ok) {
+    return performOverlayHandoff({
+      ...common,
+      degradationCode: preflight.code || "full_control_preflight_failed",
+    });
+  }
+
+  let mutationState = null;
   try {
-    if (fullControl) {
-      const existingOverwrite = message.channel.permissionOverwrites.cache.get(role.id);
-      roleOverwriteCreated = !existingOverwrite;
-      await message.channel.permissionOverwrites.edit(
-        role,
-        { ViewChannel: true, SendMessages: true, ReadMessageHistory: true },
-        { reason: auditReason }
-      );
+    mutationState = await applyFullControlEscalation({
+      message,
+      role,
+      categoryId,
+      name,
+      auditReason,
+    });
+  } catch (error) {
+    mutationState = error?.pixyMutationState || mutationState;
+    await rollbackFullControlEscalation({ message, role, state: mutationState });
+    return performOverlayHandoff({
+      ...common,
+      degradationCode: error?.code || "full_control_mutation_failed",
+    });
+  }
 
-      if (message.channel.parentId !== categoryId) {
-        await message.channel.setParent(categoryId, { lockPermissions: false, reason: auditReason });
-      }
-      if (name && name !== message.channel.name) await message.channel.setName(name, auditReason);
-    }
-
-    const notificationMessage = await sendEscalationNotification({
+  let notificationMessage = null;
+  try {
+    notificationMessage = await sendEscalationNotification({
       notificationChannel: notificationResult.channel,
       ticketChannel: message.channel,
       role,
       reason,
       routeId,
       requestedBy: message.author,
-      newName: fullControl ? name : message.channel.name,
+      newName: name || message.channel.name,
       summary: actionRequest.data?.summary,
     });
+  } catch (error) {
+    await rollbackFullControlEscalation({ message, role, state: mutationState });
+    try {
+      return await performOverlayHandoff({
+        ...common,
+        degradationCode: "full_control_notification_failed",
+      });
+    } catch (fallbackError) {
+      throw createActionError(
+        "escalation_notification_failed",
+        "Pixy could not deliver the human-support notification.",
+        { cause: fallbackError || error }
+      );
+    }
+  }
 
-    await prisma.ticketChannel.update({
-      where: { channelId: message.channel.id },
-      data: {
-        escalated: true,
-        escalatedAt: new Date(),
-        escalatedRoleId: roleId,
-        escalationReason: reason || null,
-        escalationNotificationMessageId: notificationMessage.id,
-        aiEnabled: false,
-        lastAiAction: TICKET_ACTIONS.ESCALATE_TICKET,
-        lastAiActionAt: new Date(),
-        lastAiReplyAt: new Date(),
-      },
+  try {
+    await persistEscalationState({
+      message,
+      roleId,
+      reason,
+      notificationMessage,
     });
+  } catch (error) {
+    await rollbackFullControlEscalation({ message, role, state: mutationState });
+    try {
+      return await performOverlayHandoff({
+        ...common,
+        notificationMessage,
+        degradationCode: "full_control_state_persist_failed",
+      });
+    } catch (fallbackError) {
+      throw createActionError(
+        "escalation_state_persist_failed",
+        "Pixy notified human support but could not persist the escalation state.",
+        { cause: fallbackError || error }
+      );
+    }
+  }
 
-    const replyText = fullControl
-      ? actionRequest.text
-      : buildOverlayHandoffReply(actionRequest, roleName || role.name);
-    const replySent = await sendTicketEscalationReply({
+  let replySent = false;
+  try {
+    replySent = await sendTicketEscalationReply({
       message,
       roleName: roleName || role.name,
-      text: replyText,
+      text: actionRequest.text,
     });
-
-    await refreshEscalatedTicketControls(message.channel, settings).catch((error) => {
-      console.error("Failed to refresh ticket controls after escalation:", error);
-    });
-
-    return { ok: true, replySent, channelDeleted: false, fullControl };
   } catch (error) {
-    if (fullControl) {
-      if (message.channel.name !== originalName) {
-        await message.channel.setName(originalName, "Rollback failed Pixy escalation").catch(() => null);
-      }
-      if (originalParentId && message.channel.parentId !== originalParentId) {
-        await message.channel.setParent(originalParentId, { lockPermissions: false, reason: "Rollback failed Pixy escalation" }).catch(() => null);
-      }
-      if (roleOverwriteCreated) {
-        await message.channel.permissionOverwrites.delete(role, "Rollback failed Pixy escalation").catch(() => null);
-      }
-    }
-    throw error;
+    console.error("Failed to send full-control escalation reply:", error);
   }
+
+  await refreshEscalatedTicketControls(message.channel, settings).catch((error) => {
+    console.error("Failed to refresh ticket controls after escalation:", error);
+  });
+
+  return {
+    ok: true,
+    replySent,
+    channelDeleted: false,
+    fullControl: true,
+    degraded: false,
+    degradationCode: null,
+    rolePinged: notificationMessage.pixyRolePinged ?? null,
+  };
 }
 
 async function executeCloseTicket({ actionRequest, message }) {
@@ -221,6 +461,11 @@ async function executeTicketAction({
 }
 
 module.exports = {
+  applyFullControlEscalation,
   buildOverlayHandoffReply,
+  captureFullControlEscalationState,
   executeTicketAction,
+  performOverlayHandoff,
+  rollbackFullControlEscalation,
+  snapshotRoleAccessOverwrite,
 };

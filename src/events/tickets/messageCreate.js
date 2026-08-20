@@ -1,4 +1,4 @@
-const { Events, ChannelType } = require("discord.js");
+const { Events } = require("discord.js");
 const { prisma } = require("../../config/prisma");
 const { aiConfig } = require("../../config/ai");
 const { buildTicketContext } = require("../../ai/buildTicketContext");
@@ -7,6 +7,7 @@ const {
   buildAssistantTicketPrompt,
 } = require("../../ai/buildAssistantTicketPrompt");
 const { generateAiReply } = require("../../ai/aiClient");
+const { getAiProvider } = require("../../ai/providers/providerRegistry");
 const { parseAiOutput } = require("../../ai/parseAiAction");
 const {
   getGuildAgentActionAvailability,
@@ -17,10 +18,14 @@ const {
 const {
   refreshOpenTicketControlForChannel,
 } = require("../../billing/ticketControlRefresh");
+const {
+  reconcileTicketChannel,
+} = require("../../tickets/ticketChannelLifecycle");
 const { splitDiscordMessage } = require("../../utils/splitDiscordMessage");
 const { validateTicketAction } = require("../../utils/tickets/actions/ticketActionValidator");
 const { executeTicketAction } = require("../../utils/tickets/actions/ticketActionExecutor");
 const { TICKET_ACTIONS } = require("../../utils/tickets/actions/ticketActionTypes");
+const { isSupportedTicketChannel } = require("../../utils/tickets/ticketSurface");
 
 const channelCooldowns = new Map();
 const channelControlPlans = new Map();
@@ -95,6 +100,15 @@ function getErrorStatus(error) {
   return error?.status || error?.code || error?.response?.status || error?.cause?.status || null;
 }
 
+function resolveUsageProvider(config, aiResult = null) {
+  const providerId = aiResult?.provider || config?.aiProvider || aiConfig.provider;
+  try {
+    return getAiProvider(providerId);
+  } catch {
+    return getAiProvider(aiConfig.provider);
+  }
+}
+
 async function safeReply(message, content) {
   try {
     await message.reply({
@@ -109,13 +123,14 @@ async function safeReply(message, content) {
 }
 
 async function logAiUsage({ message, config, aiResult, status, error }) {
+  const provider = resolveUsageProvider(config, aiResult);
   await prisma.aiUsageLog.create({
     data: {
       guildId: message.guild.id,
       channelId: message.channelId,
       userId: message.author?.id || null,
-      provider: config.aiProvider || aiConfig.provider,
-      model: aiResult?.model || config.aiModel || aiConfig.groq.model,
+      provider: aiResult?.provider || provider.id,
+      model: aiResult?.model || config?.aiModel || provider.defaultModel,
       promptTokens: aiResult?.usage?.prompt_tokens || null,
       completionTokens: aiResult?.usage?.completion_tokens || null,
       totalTokens: aiResult?.usage?.total_tokens || null,
@@ -210,20 +225,18 @@ const messageCreateEvent = {
   name: Events.MessageCreate,
   async execute(message) {
     try {
-      if (shouldIgnoreMessage(message) || message.channel.type !== ChannelType.GuildText) return;
+      if (shouldIgnoreMessage(message) || !isSupportedTicketChannel(message.channel)) return;
+
+      const lifecycle = await reconcileTicketChannel(message.channel);
+      if (!lifecycle.tracked) return;
 
       const channelId = message.channelId;
       const guildId = message.guild.id;
+      const config = lifecycle.eligibility?.config;
+      const ticket = lifecycle.ticket;
+      const entitlement = await loadGuildEntitlementState(guildId);
 
-      const [config, ticket, ignoredChannel, entitlement] = await Promise.all([
-        prisma.guildConfig.findUnique({ where: { guildId } }),
-        prisma.ticketChannel.findUnique({ where: { channelId } }),
-        prisma.guildIgnoredChannel.findUnique({
-          where: { guildId_channelId: { guildId, channelId } },
-        }),
-        loadGuildEntitlementState(guildId),
-      ]);
-      if (!config?.enabled || config.aiEnabled === false || !ticket || ticket.closed || ticket.aiEnabled === false || ignoredChannel) return;
+      if (!config?.enabled || config.aiEnabled === false || !ticket || ticket.closed || ticket.aiEnabled === false) return;
 
       await refreshControlsForPlanChange({
         message,
@@ -267,8 +280,9 @@ const messageCreateEvent = {
       try {
         aiResult = await generateAiReply({
           messages,
-          provider: config.aiProvider || aiConfig.provider,
-          model: config.aiModel || aiConfig.groq.model,
+          guildId,
+          provider: config.aiProvider || null,
+          model: config.aiModel || null,
         });
       } catch (error) {
         const status = getErrorStatus(error);
@@ -414,4 +428,5 @@ module.exports = Object.assign(messageCreateEvent, {
   channelControlPlans,
   decorateOpeningContextPrompt,
   refreshControlsForPlanChange,
+  resolveUsageProvider,
 });

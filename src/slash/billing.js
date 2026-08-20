@@ -62,7 +62,7 @@ function getPlanDescription(summary) {
   if (!summary?.initialized) {
     return [
       "Billing has not been initialized for this server.",
-      "Run `/pixy-setup` to configure ticket tracking and start the one-time seven-day Trial.",
+      "Run `/pixy-setup` to complete onboarding and start the one-time seven-day Trial.",
     ].join("\n");
   }
 
@@ -193,9 +193,9 @@ function buildBillingStatusEmbed({ summary, guildName, guildId }) {
       value: buildCapabilityValue(summary),
     },
     {
-      name: "Groq usage",
+      name: "AI provider usage",
       value:
-        "This guild supplies its own Groq API key and is responsible for its own Groq usage and limits. Pixy does not provide shared Groq quota.",
+        "This guild supplies its own API key for its selected AI provider (Groq, Google Gemini, or Mistral) and is responsible for that provider's usage, limits, and charges. Pixy does not provide a shared provider quota.",
     }
   );
 
@@ -248,7 +248,7 @@ function buildPaymentInstructions({ methodKey, ownerId, guildName, guildId }) {
     `   - Server ID: \`${cleanText(guildId, 30)}\``,
     "   - Your desired subscription duration.",
     "",
-    "⚠️ **Never send passwords, Discord tokens, Groq API keys, backup codes, or other secrets.**",
+    "⚠️ **Never send passwords, Discord tokens, AI provider API keys, backup codes, or other secrets.**",
     "",
     "Pixy did not send the owner a DM, collect a payment, or activate/renew this server automatically.",
   ].join("\n");

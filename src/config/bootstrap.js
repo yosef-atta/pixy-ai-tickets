@@ -8,6 +8,16 @@ const {
 } = require("../security/credentialEncryption");
 
 const SLASH_COMMAND_PREFIX = "pixy-";
+const PUBLIC_SLASH_COMMANDS = Object.freeze([
+  "setup",
+  "settings",
+  "billing",
+  "help",
+  "reset",
+]);
+const PUBLIC_SLASH_COMMAND_SET = new Set(PUBLIC_SLASH_COMMANDS);
+const GUILD_INSTALL_TYPE = 0;
+const GUILD_INTERACTION_CONTEXT = 0;
 
 function getAllJsFiles(dirPath, arrayOfFiles = []) {
   const files = fs.readdirSync(dirPath).sort((a, b) => a.localeCompare(b));
@@ -32,6 +42,18 @@ function getCommandName(command) {
   return command?.data?.name || command?.name || "unknown";
 }
 
+function getBaseSlashCommandName(command) {
+  const currentName = String(getCommandName(command) || "").toLowerCase();
+  if (!currentName || currentName === "unknown") return currentName;
+  return currentName.startsWith(SLASH_COMMAND_PREFIX)
+    ? currentName.slice(SLASH_COMMAND_PREFIX.length)
+    : currentName;
+}
+
+function isPublicSlashCommand(command) {
+  return PUBLIC_SLASH_COMMAND_SET.has(getBaseSlashCommandName(command));
+}
+
 function getProductionSlashCommandName(command) {
   const currentName = String(getCommandName(command) || "").toLowerCase();
   if (!currentName || currentName === "unknown") return currentName;
@@ -54,7 +76,16 @@ function applyProductionSlashCommandName(command) {
 }
 
 function attachSource(handler, commandName) {
-  return { ...handler, sourceCommand: commandName };
+  const attached = { ...handler, sourceCommand: commandName };
+
+  // Slash handlers are registered before standalone component modules load.
+  // Delegate execution to the original handler object so a later component can
+  // safely refine that handler without leaving the client with a stale copy.
+  if (typeof handler?.execute === "function") {
+    attached.execute = (...args) => handler.execute.apply(handler, args);
+  }
+
+  return attached;
 }
 
 function registerInteractionHandlers(client, command) {
@@ -107,15 +138,27 @@ function registerInteractionHandlers(client, command) {
   }
 }
 
-function commandToJSON(command) {
-  return typeof command.data?.toJSON === "function"
+function commandToJSON(command, options = {}) {
+  const json = typeof command.data?.toJSON === "function"
     ? command.data.toJSON()
-    : command.data;
+    : { ...(command.data || {}) };
+  const globalScope = options.globalScope !== false;
+
+  if (command.guildOnly === true && globalScope) {
+    return {
+      ...json,
+      integration_types: [GUILD_INSTALL_TYPE],
+      contexts: [GUILD_INTERACTION_CONTEXT],
+    };
+  }
+
+  return json;
 }
 
 async function syncCommands({ token, clientId, guildId }, commands, prefixCount) {
   const rest = new REST({ version: "10" }).setToken(token);
-  const body = commands.map(commandToJSON);
+  const globalScope = !guildId;
+  const body = commands.map((command) => commandToJSON(command, { globalScope }));
 
   if (guildId) {
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
@@ -125,6 +168,7 @@ async function syncCommands({ token, clientId, guildId }, commands, prefixCount)
     console.log(`Synced ${body.length} global slash command(s).`);
   }
 
+  console.log(`Public slash commands: ${body.map((command) => command.name).join(", ")}.`);
   console.log(`Loaded ${prefixCount} prefix command(s).`);
 }
 
@@ -199,6 +243,13 @@ async function bootstrap() {
           continue;
         }
 
+        if (!isPublicSlashCommand(command)) {
+          console.warn(
+            `Skipped non-public slash command ${getCommandName(command)} from ${file}.`
+          );
+          continue;
+        }
+
         const commandName = applyProductionSlashCommandName(command);
         commands.push(command);
         client.commands.set(commandName, command);
@@ -235,4 +286,16 @@ async function bootstrap() {
   }
 }
 
-module.exports = { bootstrap };
+module.exports = {
+  GUILD_INSTALL_TYPE,
+  GUILD_INTERACTION_CONTEXT,
+  PUBLIC_SLASH_COMMANDS,
+  SLASH_COMMAND_PREFIX,
+  applyProductionSlashCommandName,
+  attachSource,
+  bootstrap,
+  commandToJSON,
+  getBaseSlashCommandName,
+  getProductionSlashCommandName,
+  isPublicSlashCommand,
+};

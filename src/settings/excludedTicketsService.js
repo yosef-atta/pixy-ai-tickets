@@ -1,0 +1,161 @@
+const { prisma } = require("../config/prisma");
+const {
+  findMatchingSourceForChannel,
+  listResolvedTicketSources,
+} = require("../config/ticketSources");
+const {
+  reconcileTicketChannel,
+} = require("../tickets/ticketChannelLifecycle");
+const {
+  isSupportedTicketChannel,
+} = require("../utils/tickets/ticketSurface");
+
+function cleanReason(value) {
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? text.slice(0, 300) : null;
+}
+
+async function getGuildChannel(guild, channelId) {
+  if (!guild || !channelId) return null;
+  const cached = guild.channels?.cache?.get?.(channelId);
+  if (cached) return cached;
+  if (typeof guild.channels?.fetch !== "function") return null;
+  try {
+    return await guild.channels.fetch(channelId);
+  } catch {
+    return null;
+  }
+}
+
+async function listExcludedTickets(guildId, options = {}) {
+  const client = options.client || prisma;
+  const limit = Math.max(1, Math.min(Number(options.limit || 100), 200));
+  return client.guildIgnoredChannel.findMany({
+    where: { guildId },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+}
+
+async function validateExcludedTicketTarget(guild, channelId, options = {}) {
+  const client = options.client || prisma;
+  if (!guild?.id) return { ok: false, code: "missing_guild" };
+
+  const sources = options.sources || await listResolvedTicketSources(guild.id, { client });
+  if (!sources.length) {
+    return { ok: false, code: "ticket_sources_not_configured", sources };
+  }
+
+  const channel = options.channel || await getGuildChannel(guild, channelId);
+  if (!channel || !isSupportedTicketChannel(channel)) {
+    return { ok: false, code: "invalid_ticket_channel", sources, channel: null };
+  }
+
+  const source = findMatchingSourceForChannel(channel, sources);
+  if (!source) {
+    return { ok: false, code: "outside_ticket_sources", sources, channel };
+  }
+
+  return { ok: true, channel, source, sources };
+}
+
+async function excludeTicket(guild, channelId, reason, options = {}) {
+  const client = options.client || prisma;
+  const validation = await validateExcludedTicketTarget(guild, channelId, {
+    ...options,
+    client,
+  });
+  if (!validation.ok) return validation;
+
+  const existing = await client.guildIgnoredChannel.findUnique({
+    where: {
+      guildId_channelId: {
+        guildId: guild.id,
+        channelId: validation.channel.id,
+      },
+    },
+  });
+  if (existing) {
+    return {
+      ok: false,
+      code: "already_excluded",
+      entry: existing,
+      channel: validation.channel,
+      source: validation.source,
+    };
+  }
+
+  const normalizedReason = cleanReason(reason);
+  const write = async (tx) => {
+    const entry = await tx.guildIgnoredChannel.create({
+      data: {
+        guildId: guild.id,
+        channelId: validation.channel.id,
+        reason: normalizedReason,
+      },
+    });
+    await tx.ticketChannel.deleteMany({
+      where: { guildId: guild.id, channelId: validation.channel.id },
+    });
+    return entry;
+  };
+
+  const entry = typeof client.$transaction === "function"
+    ? await client.$transaction(async (tx) => write(tx))
+    : await write(client);
+
+  return {
+    ok: true,
+    entry,
+    channel: validation.channel,
+    source: validation.source,
+  };
+}
+
+async function restoreExcludedTicket(guild, channelId, options = {}) {
+  const client = options.client || prisma;
+  const channel = await getGuildChannel(guild, channelId);
+  const removed = await client.guildIgnoredChannel.deleteMany({
+    where: { guildId: guild.id, channelId },
+  });
+
+  if (!removed?.count) {
+    return { ok: false, code: "not_excluded", removed: 0, channel };
+  }
+
+  if (!channel) {
+    return {
+      ok: true,
+      removed: Number(removed.count),
+      reactivated: false,
+      code: "channel_missing",
+      channel: null,
+    };
+  }
+
+  const reconcile = options.reconcile || reconcileTicketChannel;
+  const reconciliation = await reconcile(channel, {
+    client,
+    ensureControls: options.ensureControls !== false,
+  }).catch((error) => ({ tracked: false, code: error?.code || "reconcile_failed", error }));
+
+  return {
+    ok: true,
+    removed: Number(removed.count),
+    reactivated: reconciliation?.tracked === true,
+    code: reconciliation?.tracked === true ? "reactivated" : reconciliation?.code || "not_reactivated",
+    channel,
+    reconciliation,
+  };
+}
+
+module.exports = {
+  cleanReason,
+  excludeTicket,
+  getGuildChannel,
+  listExcludedTickets,
+  restoreExcludedTicket,
+  validateExcludedTicketTarget,
+};

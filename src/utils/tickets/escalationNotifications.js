@@ -5,6 +5,19 @@ const {
 
 const { prisma } = require("../../config/prisma");
 const { aiConfig } = require("../../config/ai");
+const {
+  getBotMember,
+  permissionLabel,
+  refreshGuildRoles,
+} = require("./humanSupportPermissions");
+const {
+  isThreadTicketChannel,
+} = require("./ticketSurface");
+
+const NOTIFICATION_REQUIRED_PERMISSIONS = Object.freeze([
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessages,
+]);
 
 function getNotificationChannelName() {
   return String(
@@ -54,18 +67,6 @@ async function getRecentTicketContext(ticketChannel) {
   }
 }
 
-async function getBotMember(guild) {
-  if (!guild) return null;
-
-  if (guild.members?.me) return guild.members.me;
-
-  try {
-    return await guild.members.fetchMe();
-  } catch {
-    return null;
-  }
-}
-
 async function getExistingTextChannel(guild, channelId, categoryId) {
   if (!guild || !channelId) return null;
 
@@ -112,28 +113,120 @@ async function findNotificationChannelInCategory(guild, categoryId) {
   );
 }
 
-async function canSendInChannel(channel) {
-  const botMember = await getBotMember(channel.guild);
-  if (!botMember) return false;
+async function getFreshBotMember(guild) {
+  if (!guild) return null;
 
-  const permissions = channel.permissionsFor(botMember);
+  const botUserId = guild.client?.user?.id || guild.members?.me?.id || null;
+  if (botUserId && typeof guild.members?.fetch === "function") {
+    try {
+      return await guild.members.fetch({ user: botUserId, force: true });
+    } catch {
+      // Fall back to fetchMe/cached member when Discord cannot be refreshed.
+    }
+  }
 
-  return Boolean(
-    permissions?.has(PermissionFlagsBits.ViewChannel) &&
-      permissions?.has(PermissionFlagsBits.SendMessages)
+  if (typeof guild.members?.fetchMe === "function") {
+    try {
+      return await guild.members.fetchMe({ force: true });
+    } catch {
+      // Fall back to the cached member when Discord cannot be refreshed.
+    }
+  }
+
+  return getBotMember(guild);
+}
+
+async function refreshNotificationChannel(channel) {
+  if (!channel?.guild) return channel || null;
+
+  if (typeof channel.fetch === "function") {
+    try {
+      return await channel.fetch(true);
+    } catch {
+      // Fall back to the guild channel manager below.
+    }
+  }
+
+  if (channel.id && typeof channel.guild.channels?.fetch === "function") {
+    try {
+      return await channel.guild.channels.fetch(channel.id);
+    } catch {
+      return channel;
+    }
+  }
+
+  return channel;
+}
+
+function labelsForPermissions(permissions = []) {
+  return permissions.map(permissionLabel);
+}
+
+async function getNotificationChannelPermissionStatus(channel, options = {}) {
+  if (!channel?.guild) {
+    return {
+      ok: false,
+      channel: channel || null,
+      missingPermissions: [...NOTIFICATION_REQUIRED_PERMISSIONS],
+      missingPermissionLabels: NOTIFICATION_REQUIRED_PERMISSIONS.map(permissionLabel),
+      missingBasePermissions: [...NOTIFICATION_REQUIRED_PERMISSIONS],
+      missingBasePermissionLabels: NOTIFICATION_REQUIRED_PERMISSIONS.map(permissionLabel),
+      blockedByOverwritePermissions: [],
+      blockedByOverwritePermissionLabels: [],
+    };
+  }
+
+  let resolvedChannel = channel;
+  const guild = channel.guild;
+
+  if (options.refresh === true) {
+    await refreshGuildRoles(guild);
+    resolvedChannel = await refreshNotificationChannel(channel) || channel;
+  }
+
+  const botMember = options.refresh === true
+    ? await getFreshBotMember(guild)
+    : await getBotMember(guild);
+  const effectivePermissions = botMember
+    ? resolvedChannel.permissionsFor(botMember)
+    : null;
+  const basePermissions = botMember?.permissions || null;
+
+  const missingPermissions = NOTIFICATION_REQUIRED_PERMISSIONS.filter(
+    (permission) => !effectivePermissions?.has(permission)
   );
+  const missingBasePermissions = missingPermissions.filter(
+    (permission) => !basePermissions?.has(permission)
+  );
+  const blockedByOverwritePermissions = missingPermissions.filter(
+    (permission) => basePermissions?.has(permission)
+  );
+
+  return {
+    ok: missingPermissions.length === 0,
+    channel: resolvedChannel,
+    missingPermissions,
+    missingPermissionLabels: labelsForPermissions(missingPermissions),
+    missingBasePermissions,
+    missingBasePermissionLabels: labelsForPermissions(missingBasePermissions),
+    blockedByOverwritePermissions,
+    blockedByOverwritePermissionLabels: labelsForPermissions(blockedByOverwritePermissions),
+  };
+}
+
+async function canSendInChannel(channel) {
+  const status = await getNotificationChannelPermissionStatus(channel);
+  return status.ok;
 }
 
 async function canMentionRoleInChannel(channel, role) {
   if (!channel || !role) return false;
-
   if (role.mentionable) return true;
 
   const botMember = await getBotMember(channel.guild);
   if (!botMember) return false;
 
   const permissions = channel.permissionsFor(botMember);
-
   return Boolean(permissions?.has(PermissionFlagsBits.MentionEveryone));
 }
 
@@ -141,6 +234,7 @@ async function getOrCreateEscalationNotificationChannel({
   guild,
   categoryId,
   existingChannelId,
+  client = prisma,
 }) {
   if (!guild || !categoryId) {
     return {
@@ -160,12 +254,14 @@ async function getOrCreateEscalationNotificationChannel({
   }
 
   if (!channel) {
-    const botMember = await getBotMember(guild);
+    await refreshGuildRoles(guild);
+    const botMember = await getFreshBotMember(guild);
 
     if (!botMember?.permissions?.has(PermissionFlagsBits.ManageChannels)) {
       return {
         ok: false,
         code: "missing_manage_channels_permission",
+        missingPermissionLabels: [permissionLabel(PermissionFlagsBits.ManageChannels)],
       };
     }
 
@@ -184,16 +280,26 @@ async function getOrCreateEscalationNotificationChannel({
     }
   }
 
-  const canSend = await canSendInChannel(channel);
+  const permissionStatus = await getNotificationChannelPermissionStatus(channel, {
+    refresh: true,
+  });
+  channel = permissionStatus.channel || channel;
 
-  if (!canSend) {
+  if (!permissionStatus.ok) {
     return {
       ok: false,
-      code: "missing_notification_channel_send_permission",
+      code: "missing_notification_channel_permissions",
+      channel,
+      missingPermissions: permissionStatus.missingPermissions,
+      missingPermissionLabels: permissionStatus.missingPermissionLabels,
+      missingBasePermissions: permissionStatus.missingBasePermissions,
+      missingBasePermissionLabels: permissionStatus.missingBasePermissionLabels,
+      blockedByOverwritePermissions: permissionStatus.blockedByOverwritePermissions,
+      blockedByOverwritePermissionLabels: permissionStatus.blockedByOverwritePermissionLabels,
     };
   }
 
-  await prisma.guildConfig.update({
+  await client.guildConfig.update({
     where: {
       guildId: guild.id,
     },
@@ -222,14 +328,17 @@ async function sendEscalationNotification({
   const details = summary && typeof summary === "object" && !Array.isArray(summary)
     ? summary
     : {};
+  const roleCanBePinged = await canMentionRoleInChannel(notificationChannel, role);
+  const threadTicket = isThreadTicketChannel(ticketChannel);
 
   const sections = [
     "🚨 **Ticket Escalated**",
     "",
-    `**Ticket Channel:** <#${ticketChannel.id}>`,
+    `**${threadTicket ? "Ticket Thread" : "Ticket Channel"}:** <#${ticketChannel.id}>`,
     `**Support Role:** <@&${role.id}>`,
     `**Support Team:** ${role.name}`,
-    `**New Ticket Name:** ${newName || ticketChannel.name}`,
+    roleCanBePinged ? null : "**Role Ping:** Not sent — the role is not mentionable. The handoff still completed.",
+    `**${threadTicket ? "Thread Name" : "New Ticket Name"}:** ${newName || ticketChannel.name}`,
     routeId ? `**Route ID:** \`${routeId}\`` : null,
     requestedBy
       ? `**Requested By:** ${requestedBy.tag || requestedBy.username || requestedBy.id} (${requestedBy.id})`
@@ -262,18 +371,27 @@ async function sendEscalationNotification({
     content = `${content.slice(0, 1947).trim()}...`;
   }
 
-  return notificationChannel.send({
+  const message = await notificationChannel.send({
     content,
     allowedMentions: {
-      roles: [role.id],
+      roles: roleCanBePinged ? [role.id] : [],
       users: [],
       repliedUser: false,
     },
   });
+
+  return Object.assign(message, {
+    pixyRolePinged: roleCanBePinged,
+  });
 }
 
 module.exports = {
-  getOrCreateEscalationNotificationChannel,
-  sendEscalationNotification,
+  NOTIFICATION_REQUIRED_PERMISSIONS,
   canMentionRoleInChannel,
+  canSendInChannel,
+  getFreshBotMember,
+  getNotificationChannelPermissionStatus,
+  getOrCreateEscalationNotificationChannel,
+  refreshNotificationChannel,
+  sendEscalationNotification,
 };

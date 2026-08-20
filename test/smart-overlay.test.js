@@ -28,13 +28,12 @@ function withoutReset(values) {
   return values.filter((value) => value !== "reset");
 }
 
-test("smart overlay is the non-destructive preset", () => {
+test("smart overlay is the non-destructive preset and does not force escalation", () => {
   const settings = getTicketOperatingModePreferences(TICKET_OPERATING_MODES.OVERLAY);
 
   assert.deepEqual(settings, {
     closeTicketEnabled: false,
     renameReviewEnabled: false,
-    escalationEnabled: true,
   });
   assert.equal(resolveTicketOperatingMode(settings), TICKET_OPERATING_MODES.OVERLAY);
   assert.equal(isFullTicketControlEnabled(settings), false);
@@ -50,10 +49,13 @@ test("full mode explicitly opts into lifecycle controls", () => {
   assert.equal(isFullTicketControlEnabled(settings), true);
 });
 
-test("premium overlay always exposes human handoff and AI toggle", () => {
+test("premium overlay exposes human handoff when escalation is enabled", () => {
   const payload = buildSmartOverlayPayload(true, {
     plan: BILLING_PLANS.PRO,
-    settings: getTicketOperatingModePreferences(TICKET_OPERATING_MODES.OVERLAY),
+    settings: {
+      ...getTicketOperatingModePreferences(TICKET_OPERATING_MODES.OVERLAY),
+      escalationEnabled: true,
+    },
   });
 
   assert.deepEqual(optionValues(payload), ["escalate", "ai_off"]);
@@ -64,21 +66,27 @@ test("premium overlay always exposes human handoff and AI toggle", () => {
 test("expired overlay keeps the staff AI toggle", () => {
   const payload = buildSmartOverlayPayload(true, {
     plan: BILLING_PLANS.EXPIRED,
-    settings: getTicketOperatingModePreferences(TICKET_OPERATING_MODES.OVERLAY),
+    settings: {
+      ...getTicketOperatingModePreferences(TICKET_OPERATING_MODES.OVERLAY),
+      escalationEnabled: true,
+    },
   });
 
   assert.deepEqual(optionValues(payload), ["ai_off"]);
   assert.match(payload.content, /ticket actions are unavailable/i);
 });
 
-test("overlay keeps AI toggle when escalation is disabled", () => {
+test("overlay remains overlay and keeps AI toggle when escalation is disabled", () => {
+  const settings = {
+    closeTicketEnabled: false,
+    renameReviewEnabled: false,
+    escalationEnabled: false,
+  };
+  assert.equal(resolveTicketOperatingMode(settings), TICKET_OPERATING_MODES.OVERLAY);
+
   const payload = buildSmartOverlayPayload(true, {
     plan: BILLING_PLANS.PRO,
-    settings: {
-      closeTicketEnabled: false,
-      renameReviewEnabled: false,
-      escalationEnabled: false,
-    },
+    settings,
   });
 
   assert.deepEqual(optionValues(payload), ["ai_off"]);
@@ -87,7 +95,10 @@ test("overlay keeps AI toggle when escalation is disabled", () => {
 test("human handoff keeps a resume-AI control and hides duplicate handoff", () => {
   const payload = buildSmartOverlayPayload(false, {
     plan: BILLING_PLANS.PRO,
-    settings: getTicketOperatingModePreferences(TICKET_OPERATING_MODES.OVERLAY),
+    settings: {
+      ...getTicketOperatingModePreferences(TICKET_OPERATING_MODES.OVERLAY),
+      escalationEnabled: true,
+    },
     escalated: true,
   });
 

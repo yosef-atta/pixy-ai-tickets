@@ -1,4 +1,4 @@
-const { Events, ChannelType } = require("discord.js");
+const { Events } = require("discord.js");
 const { prisma } = require("../../config/prisma");
 const ticketMessageCreate = require("./messageCreate");
 const {
@@ -6,6 +6,9 @@ const {
   isExternalOpeningCandidate,
   isWithinOpeningWindow,
 } = require("../../utils/tickets/openingContext");
+const {
+  isSupportedTicketChannel,
+} = require("../../utils/tickets/ticketSurface");
 
 const processingChannels = new Set();
 
@@ -35,7 +38,7 @@ async function tryProcessOpeningMessage(message, options = {}) {
   const guildId = message?.guild?.id;
 
   if (!channelId || !guildId) return { processed: false, code: "missing_context" };
-  if (message.channel.type !== ChannelType.GuildText) {
+  if (!isSupportedTicketChannel(message.channel)) {
     return { processed: false, code: "unsupported_channel_type" };
   }
   if (!isExternalOpeningCandidate(message, message.client?.user?.id)) {
