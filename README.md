@@ -67,9 +67,9 @@ Choose one of the providers exposed in setup:
 - **Google Gemini**
 - **Mistral**
 
-The guild supplies its own API key for the selected provider. Pixy validates the credential before saving it encrypted, and the saved secret is never displayed back to users.
+The guild supplies its own API key for the selected provider. Pixy runs provider-specific validation plus a small live generation probe before saving the credential encrypted, and the saved secret is never displayed back to users. Live validation failures are surfaced directly in AI Provider setup and Setup Health.
 
-Each provider has a default model that is usable immediately after a valid credential is saved. **Change Model** verifies an alternate model against the connected provider account before saving it.
+Each provider has a default model that is usable immediately after a valid credential is saved. **Change Model** verifies an alternate model against the connected provider account and runs the same live generation check before saving it.
 
 Switching providers clears the previous provider credential and model override so a credential from one provider cannot accidentally be reused with another provider.
 
