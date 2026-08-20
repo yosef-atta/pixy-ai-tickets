@@ -4,9 +4,14 @@ const test = require("node:test");
 const {
   PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
   PROVIDER_VALIDATION_PROMPT,
+  PROVIDER_VALIDATION_RETRY_OUTPUT_TOKENS,
   validateProviderCredential,
   validateProviderModel,
 } = require("../src/ai/providers/providerRegistry");
+const {
+  GROQ_GPT_OSS_MODEL_PATTERN,
+  buildGroqCompletionRequest,
+} = require("../src/ai/providers/groqProvider");
 const {
   SETUP_VALIDATION_CHANNEL_ID,
   SETUP_VALIDATION_FAILED,
@@ -64,9 +69,11 @@ test("credential validation requires a real live generation probe", async () => 
   assert.equal(result.valid, true);
   assert.equal(result.liveGeneration, true);
   assert.equal(result.probe.text, "Hello back");
+  assert.equal(result.probe.retried, false);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].credential, "secret");
   assert.equal(calls[0].model, "future-default");
+  assert.equal(calls[0].validationProbe, true);
   assert.deepEqual(calls[0].messages, [
     { role: "user", content: PROVIDER_VALIDATION_PROMPT },
   ]);
@@ -75,6 +82,59 @@ test("credential validation requires a real live generation probe", async () => 
     PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS
   );
   assert.equal(calls[0].generation.temperature, 0);
+});
+
+test("an empty successful probe retries once with a larger completion budget", async () => {
+  const calls = [];
+  const provider = createFakeProvider({
+    async generateReply(args) {
+      calls.push(args);
+      if (calls.length === 1) {
+        return { text: "", provider: "future", model: args.model };
+      }
+      return { text: "Hello after reasoning", provider: "future", model: args.model };
+    },
+  });
+
+  const result = await validateProviderCredential("future", "secret", {
+    providerResolver() {
+      return provider;
+    },
+  });
+
+  assert.equal(result.probe.text, "Hello after reasoning");
+  assert.equal(result.probe.retried, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].generation.maxOutputTokens, PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS);
+  assert.equal(calls[1].generation.maxOutputTokens, PROVIDER_VALIDATION_RETRY_OUTPUT_TOKENS);
+  assert.equal(calls[0].validationProbe, true);
+  assert.equal(calls[1].validationProbe, true);
+});
+
+test("Groq GPT-OSS minimizes reasoning only for setup live validation", () => {
+  assert.equal(GROQ_GPT_OSS_MODEL_PATTERN.test("openai/gpt-oss-120b"), true);
+
+  const validationRequest = buildGroqCompletionRequest({
+    selectedModel: "openai/gpt-oss-120b",
+    messages: [{ role: "user", content: "Hello" }],
+    temperature: 0,
+    maxOutputTokens: PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
+    validationProbe: true,
+  });
+
+  assert.equal(validationRequest.reasoning_effort, "low");
+  assert.equal(validationRequest.include_reasoning, false);
+
+  const runtimeRequest = buildGroqCompletionRequest({
+    selectedModel: "openai/gpt-oss-120b",
+    messages: [{ role: "user", content: "Hello" }],
+    temperature: 0.3,
+    maxOutputTokens: 500,
+    validationProbe: false,
+  });
+
+  assert.equal(Object.prototype.hasOwnProperty.call(runtimeRequest, "reasoning_effort"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(runtimeRequest, "include_reasoning"), false);
 });
 
 test("a key that passes metadata validation still fails setup when live generation is denied", async () => {
