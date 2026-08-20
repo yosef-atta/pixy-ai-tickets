@@ -2,15 +2,6 @@ const SETUP_VALIDATION_CHANNEL_ID = "setup-validation";
 const SETUP_VALIDATION_SUCCESS = "setup_validation_success";
 const SETUP_VALIDATION_FAILED = "setup_validation_failed";
 
-const PROVIDER_HEALTH_STATUSES = Object.freeze([
-  SETUP_VALIDATION_SUCCESS,
-  SETUP_VALIDATION_FAILED,
-  "success",
-  "provider_error",
-  "rate_limited",
-  "empty_response",
-]);
-
 function getDefaultPrisma() {
   return require("../config/prisma").prisma;
 }
@@ -75,11 +66,13 @@ async function getLatestProviderHealthEvent(guildId, provider, options = {}) {
   const normalizedProvider = String(provider || "").trim().toLowerCase();
   if (!normalizedGuildId || !normalizedProvider) return null;
 
+  // Use the latest provider event of any status. A successful runtime response,
+  // action decision, or later validation should clear an older provider error
+  // instead of leaving Setup Health stuck on stale failure state.
   return client.aiUsageLog.findFirst({
     where: {
       guildId: normalizedGuildId,
       provider: normalizedProvider,
-      status: { in: PROVIDER_HEALTH_STATUSES },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -90,7 +83,6 @@ function buildProviderHealthIssue(event, providerDefinition) {
 
   const displayName = providerDefinition?.displayName || event.provider || "AI provider";
   const status = String(event.status || "");
-  if ([SETUP_VALIDATION_SUCCESS, "success"].includes(status)) return null;
 
   if (status === "rate_limited") {
     return `${displayName} is currently rate-limited. The credential may still be valid; retry after the provider limit resets.`;
@@ -109,11 +101,12 @@ function buildProviderHealthIssue(event, providerDefinition) {
     return `${displayName} most recently failed during a real ticket reply: ${detail}`;
   }
 
+  // Any other AI usage status means the provider returned successfully enough
+  // for Pixy to continue parsing/validating the result, so provider health is OK.
   return null;
 }
 
 module.exports = {
-  PROVIDER_HEALTH_STATUSES,
   SETUP_VALIDATION_CHANNEL_ID,
   SETUP_VALIDATION_FAILED,
   SETUP_VALIDATION_SUCCESS,
