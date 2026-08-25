@@ -2,17 +2,24 @@ const http = require("node:http");
 const {
   completeWorkspaceAgentDelivery,
 } = require("../ai/workspaceAgentBridge");
+const {
+  completeWorkspaceAgentActionDelivery,
+} = require("../ai/workspaceAgentActionBridge");
+const {
+  TICKET_ACTIONS,
+} = require("../utils/tickets/actions/ticketActionTypes");
 
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/health";
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 const MAX_BODY_BYTES = 256 * 1024;
+const NOAUTH = Object.freeze([{ type: "noauth" }]);
 
 const SEND_TICKET_REPLY_TOOL = Object.freeze({
   name: "send_ticket_reply",
   title: "Send Pixy ticket reply",
   description:
-    "Deliver the final user-facing reply for a Pixy Discord support request. Use the exact one-time delivery_token supplied in the Pixy Workspace Agent trigger input and call this tool exactly once for that request.",
+    "Deliver a normal final user-facing reply for a Pixy Discord support request. Use the exact one-time delivery_token supplied in the current Pixy trigger. Do not call this after requesting a ticket action.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -28,13 +35,120 @@ const SEND_TICKET_REPLY_TOOL = Object.freeze({
     },
     required: ["delivery_token", "reply"],
   },
-  securitySchemes: [{ type: "noauth" }],
+  securitySchemes: NOAUTH,
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
     openWorldHint: true,
   },
 });
+
+const CLOSE_TICKET_TOOL = Object.freeze({
+  name: "close_ticket",
+  title: "Request Pixy ticket close",
+  description:
+    "Request closing the current Discord ticket. Use only when Pixy's supplied server context permits agent actions and the current user explicitly asks to close/end/delete/finish the ticket. Pixy revalidates plan, settings, current-message close intent, ticket surface, and Discord permissions before execution. Thread tickets cannot be closed by Pixy.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      delivery_token: {
+        type: "string",
+        description: "The exact short-lived delivery token supplied by Pixy in the current trigger input.",
+      },
+      reply: {
+        type: "string",
+        description: "Short user-facing message in the user's language accompanying the close request.",
+      },
+    },
+    required: ["delivery_token", "reply"],
+  },
+  securitySchemes: NOAUTH,
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    openWorldHint: true,
+  },
+});
+
+const RENAME_TICKET_TOOL = Object.freeze({
+  name: "rename_ticket",
+  title: "Request Pixy ticket rename",
+  description:
+    "Request renaming the current Discord ticket channel. Use only when Pixy's supplied server context permits agent actions and a clearer support-related name is warranted. Pixy sanitizes and revalidates the name, plan, settings, ticket surface, safety rules, and Discord permissions before execution. Thread tickets cannot be renamed by Pixy.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      delivery_token: {
+        type: "string",
+        description: "The exact short-lived delivery token supplied by Pixy in the current trigger input.",
+      },
+      name: {
+        type: "string",
+        description: "Requested short English Discord-channel-friendly ticket name, such as billing-refund or account-review.",
+      },
+      reply: {
+        type: "string",
+        description: "Short user-facing message in the user's language accompanying the rename request.",
+      },
+    },
+    required: ["delivery_token", "name", "reply"],
+  },
+  securitySchemes: NOAUTH,
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+  },
+});
+
+const ESCALATE_TICKET_TOOL = Object.freeze({
+  name: "escalate_ticket",
+  title: "Request Pixy human escalation",
+  description:
+    "Request handoff of the current Discord ticket to one configured Pixy Human Support route. Use exactly a configured role ID from Pixy's supplied server context; never invent one. Pixy revalidates plan, settings, ticket state, route configuration, ticket surface, and Discord permissions before execution. Thread escalation remains non-destructive Smart Overlay handoff.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      delivery_token: {
+        type: "string",
+        description: "The exact short-lived delivery token supplied by Pixy in the current trigger input.",
+      },
+      role_id: {
+        type: "string",
+        description: "Exactly one configured support role ID supplied in PIXY SERVER CONTEXT.",
+      },
+      reason: {
+        type: "string",
+        description: "Short reason why human support is needed.",
+      },
+      name: {
+        type: "string",
+        description: "Optional short English Discord-channel-friendly escalation name, such as billing-refund.",
+      },
+      reply: {
+        type: "string",
+        description: "Short user-facing message in the user's language. Do not include role mentions; Pixy handles notifications safely.",
+      },
+    },
+    required: ["delivery_token", "role_id", "reason", "reply"],
+  },
+  securitySchemes: NOAUTH,
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+  },
+});
+
+const PIXY_MCP_TOOLS = Object.freeze([
+  SEND_TICKET_REPLY_TOOL,
+  CLOSE_TICKET_TOOL,
+  RENAME_TICKET_TOOL,
+  ESCALATE_TICKET_TOOL,
+]);
 
 function jsonRpcError(id, code, message, data = undefined) {
   return {
@@ -63,9 +177,31 @@ function toolText(text, { isError = false } = {}) {
 function mapDeliveryFailure(code) {
   if (code === "delivery_token_required") return "Pixy delivery token is required.";
   if (code === "delivery_token_invalid") return "Pixy delivery token is invalid or no longer available.";
-  if (code === "delivery_token_expired") return "Pixy delivery token expired before the reply was delivered.";
+  if (code === "delivery_token_expired") return "Pixy delivery token expired before the result was delivered.";
   if (code === "delivery_reply_invalid") return "The Pixy reply was empty or invalid.";
+  if (code === "delivery_action_invalid") return "The Pixy ticket action request was invalid.";
   return "Pixy could not accept this delivery. The request may already be closed or expired.";
+}
+
+function getActionFromToolName(toolName) {
+  if (toolName === CLOSE_TICKET_TOOL.name) return TICKET_ACTIONS.CLOSE_TICKET;
+  if (toolName === RENAME_TICKET_TOOL.name) return TICKET_ACTIONS.RENAME_TICKET;
+  if (toolName === ESCALATE_TICKET_TOOL.name) return TICKET_ACTIONS.ESCALATE_TICKET;
+  return null;
+}
+
+function getActionData(toolName, args = {}) {
+  if (toolName === RENAME_TICKET_TOOL.name) {
+    return { name: args.name };
+  }
+  if (toolName === ESCALATE_TICKET_TOOL.name) {
+    return {
+      roleId: args.role_id,
+      reason: args.reason,
+      name: args.name,
+    };
+  }
+  return {};
 }
 
 async function handleWorkspaceAgentMcpMessage(message, options = {}) {
@@ -87,10 +223,14 @@ async function handleWorkspaceAgentMcpMessage(message, options = {}) {
       capabilities: { tools: { listChanged: false } },
       serverInfo: {
         name: "pixy-workspace-agent-bridge",
-        version: "1.0.0",
+        version: "1.1.0",
       },
-      instructions:
-        "For Pixy bridge requests, call send_ticket_reply exactly once with the exact one-time delivery_token supplied in the trigger input and the final user-facing reply.",
+      instructions: [
+        "For every Pixy bridge request, call exactly one Pixy delivery tool with the exact one-time delivery_token supplied in the trigger input.",
+        "Use send_ticket_reply for normal answers.",
+        "Use close_ticket, rename_ticket, or escalate_ticket only when Pixy's supplied server context permits that action and the user request satisfies Pixy's action policy.",
+        "Action tools submit requests into Pixy's existing validation/execution pipeline; they never bypass Pixy settings, plan entitlements, permissions, thread safety, close-intent checks, or configured support routes.",
+      ].join(" "),
     });
   }
 
@@ -99,36 +239,62 @@ async function handleWorkspaceAgentMcpMessage(message, options = {}) {
   }
 
   if (method === "tools/list") {
-    return jsonRpcResult(id, { tools: [SEND_TICKET_REPLY_TOOL] });
+    return jsonRpcResult(id, { tools: PIXY_MCP_TOOLS });
   }
 
   if (method === "tools/call") {
     const toolName = String(message.params?.name || "");
-    if (toolName !== SEND_TICKET_REPLY_TOOL.name) {
+    const args = message.params?.arguments || {};
+
+    if (toolName === SEND_TICKET_REPLY_TOOL.name) {
+      const completeDelivery = options.completeDelivery || completeWorkspaceAgentDelivery;
+      const result = await completeDelivery({
+        deliveryToken: args.delivery_token,
+        reply: args.reply,
+      });
+
+      if (!result?.ok) {
+        return jsonRpcResult(id, toolText(mapDeliveryFailure(result?.code), { isError: true }));
+      }
+
       return jsonRpcResult(
         id,
-        toolText(`Unknown Pixy tool: ${toolName || "(missing)"}.`, { isError: true })
+        toolText(
+          result.duplicate
+            ? "Pixy already accepted a result for this request; no duplicate Discord reply or action will be produced."
+            : "Pixy accepted the reply for delivery to the Discord ticket."
+        )
       );
     }
 
-    const args = message.params?.arguments || {};
-    const completeDelivery = options.completeDelivery || completeWorkspaceAgentDelivery;
-    const result = await completeDelivery({
-      deliveryToken: args.delivery_token,
-      reply: args.reply,
-    });
+    const action = getActionFromToolName(toolName);
+    if (action) {
+      const completeActionDelivery =
+        options.completeActionDelivery || completeWorkspaceAgentActionDelivery;
+      const result = await completeActionDelivery({
+        deliveryToken: args.delivery_token,
+        action,
+        text: args.reply,
+        data: getActionData(toolName, args),
+      });
 
-    if (!result?.ok) {
-      return jsonRpcResult(id, toolText(mapDeliveryFailure(result?.code), { isError: true }));
+      if (!result?.ok) {
+        return jsonRpcResult(id, toolText(mapDeliveryFailure(result?.code), { isError: true }));
+      }
+
+      return jsonRpcResult(
+        id,
+        toolText(
+          result.duplicate
+            ? "Pixy already accepted a result for this request; the duplicate action request was ignored."
+            : `Pixy accepted the ${action} request for its normal validation and execution pipeline.`
+        )
+      );
     }
 
     return jsonRpcResult(
       id,
-      toolText(
-        result.duplicate
-          ? "Pixy already accepted this reply; no duplicate Discord reply will be sent."
-          : "Pixy accepted the reply for delivery to the Discord ticket."
-      )
+      toolText(`Unknown Pixy tool: ${toolName || "(missing)"}.`, { isError: true })
     );
   }
 
@@ -263,11 +429,17 @@ function startWorkspaceAgentMcpServer({
 }
 
 module.exports = {
+  CLOSE_TICKET_TOOL,
   DEFAULT_PROTOCOL_VERSION,
+  ESCALATE_TICKET_TOOL,
   HEALTH_PATH,
   MCP_PATH,
+  PIXY_MCP_TOOLS,
+  RENAME_TICKET_TOOL,
   SEND_TICKET_REPLY_TOOL,
   createWorkspaceAgentMcpHttpServer,
+  getActionData,
+  getActionFromToolName,
   handleWorkspaceAgentMcpMessage,
   handleWorkspaceAgentMcpPayload,
   startWorkspaceAgentMcpServer,
