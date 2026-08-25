@@ -6,6 +6,12 @@ const { runWithGuildContext } = require("../context/guildContext");
 const {
   validateCredentialEncryptionKey,
 } = require("../security/credentialEncryption");
+const {
+  startWorkspaceAgentMcpServer,
+} = require("../http/workspaceAgentMcpServer");
+const {
+  getWorkspaceAgentMcpUrl,
+} = require("../ai/workspaceAgentBridge");
 
 const SLASH_COMMAND_PREFIX = "pixy-";
 const PUBLIC_SLASH_COMMANDS = Object.freeze([
@@ -280,6 +286,15 @@ async function bootstrap() {
 
     await syncCommands(env, commands, client.prefixCommands.size);
     await client.login(env.token);
+
+    if (env.workspaceAgentMcpEnabled) {
+      await startWorkspaceAgentMcpServer({ port: env.mcpPort });
+      console.log(
+        `Workspace Agent MCP bridge listening on 127.0.0.1:${env.mcpPort} for ${getWorkspaceAgentMcpUrl(env.publicBaseUrl)}.`
+      );
+    } else {
+      console.log("Workspace Agent MCP bridge disabled; set PIXY_PUBLIC_BASE_URL to enable it.");
+    }
   } catch (error) {
     console.error("Startup failed:", error);
     process.exit(1);
