@@ -1,6 +1,7 @@
 const dotenv = require("dotenv");
 
 const DISCORD_SNOWFLAKE_PATTERN = /^[1-9]\d{16,19}$/;
+const DEFAULT_PIXY_MCP_PORT = 3100;
 
 function isDiscordSnowflake(value) {
   return DISCORD_SNOWFLAKE_PATTERN.test(String(value || "").trim());
@@ -46,6 +47,40 @@ function getOwnerConfiguration(env) {
   };
 }
 
+function parseMcpPort(value) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return DEFAULT_PIXY_MCP_PORT;
+  }
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("PIXY_MCP_PORT must be an integer between 1 and 65535");
+  }
+  return port;
+}
+
+function normalizePublicBaseUrl(value, { isProduction = false } = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("PIXY_PUBLIC_BASE_URL must be a valid absolute URL");
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("PIXY_PUBLIC_BASE_URL must use http or https");
+  }
+  if (isProduction && parsed.protocol !== "https:") {
+    throw new Error("PIXY_PUBLIC_BASE_URL must use https in production");
+  }
+
+  parsed.hash = "";
+  parsed.search = "";
+  return parsed.toString().replace(/\/+$/, "");
+}
+
 function loadEnv(env = process.env) {
   dotenv.config({ quiet: true });
 
@@ -56,6 +91,8 @@ function loadEnv(env = process.env) {
   const nodeEnv = String(env.NODE_ENV || "development").toLowerCase();
   const isProduction = nodeEnv === "production";
   const ownerConfiguration = getOwnerConfiguration(env);
+  const publicBaseUrl = normalizePublicBaseUrl(env.PIXY_PUBLIC_BASE_URL, { isProduction });
+  const mcpPort = parseMcpPort(env.PIXY_MCP_PORT);
 
   const missing = [];
   if (!token) {
@@ -85,13 +122,19 @@ function loadEnv(env = process.env) {
     owners: ownerConfiguration.owners,
     paypalOwnerId: ownerConfiguration.paypalOwnerId,
     vodafoneOwnerId: ownerConfiguration.vodafoneOwnerId,
+    publicBaseUrl,
+    mcpPort,
+    workspaceAgentMcpEnabled: Boolean(publicBaseUrl),
   };
 }
 
 module.exports = {
+  DEFAULT_PIXY_MCP_PORT,
   DISCORD_SNOWFLAKE_PATTERN,
   getOwnerConfiguration,
   isDiscordSnowflake,
   loadEnv,
+  normalizePublicBaseUrl,
+  parseMcpPort,
   parseOwners,
 };
