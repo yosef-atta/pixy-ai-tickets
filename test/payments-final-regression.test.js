@@ -19,9 +19,17 @@ test("public and operator documentation describes implemented billing behavior",
     "^partner add <guild-id>",
     "30-day months",
     "365-day years",
-    "Groq, Google Gemini, Mistral, and OpenAI API",
   ]) {
     assert.match(readme, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const provider of [
+    "Groq",
+    "Google Gemini",
+    "Mistral",
+    "OpenAI API",
+    "ChatGPT Workspace Agent",
+  ]) {
+    assert.match(readme, new RegExp(provider.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const expected of [
     /Billing audit events/i,
