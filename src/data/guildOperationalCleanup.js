@@ -10,7 +10,15 @@ function getDefaultPrisma() {
 
 function buildOperationalDeleteOperations(client, guildId) {
   const normalizedGuildId = normalizeGuildId(guildId);
-  return [
+  const operations = [];
+
+  if (client.workspaceAgentDelivery?.deleteMany) {
+    operations.push(
+      client.workspaceAgentDelivery.deleteMany({ where: { guildId: normalizedGuildId } })
+    );
+  }
+
+  operations.push(
     client.aiUsageLog.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.ticketChannel.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.learnedAnswer.deleteMany({ where: { guildId: normalizedGuildId } }),
@@ -22,8 +30,10 @@ function buildOperationalDeleteOperations(client, guildId) {
     client.guildAiConfig.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.guildSetupState.deleteMany({ where: { guildId: normalizedGuildId } }),
     client.guildSetting.deleteMany({ where: { guildId: normalizedGuildId } }),
-    client.guildConfig.deleteMany({ where: { guildId: normalizedGuildId } }),
-  ];
+    client.guildConfig.deleteMany({ where: { guildId: normalizedGuildId } })
+  );
+
+  return operations;
 }
 
 async function deleteGuildOperationalData(guildId, options = {}) {
