@@ -41,7 +41,7 @@ Resetting Pixy, removing/reinviting the bot, or configuring it again does not cr
 - Ticket-level AI pause/resume controls
 - Per-ticket exclusions for tracked channels or threads
 - Built-in and guild-specific safety terms with allow exceptions
-- Selectable Groq, Google Gemini, Mistral, and OpenAI API providers with encrypted guild credentials
+- Selectable Groq, Google Gemini, Mistral, OpenAI API, and ChatGPT Workspace Agent (Beta) providers with encrypted guild-owned connections
 - Plan-aware controls and execution-time entitlement checks
 - Guild-isolated AI usage logs and operational reset
 - Manual Trial, Pro, and Partner billing with transactional audit records
@@ -67,14 +67,19 @@ Choose one of the providers exposed in setup:
 - **Google Gemini**
 - **Mistral**
 - **OpenAI API**
+- **ChatGPT Workspace Agent (Beta)**
 
-The guild supplies its own API key for the selected provider. Pixy runs provider-specific validation plus a small live generation probe before saving the credential encrypted, and the saved secret is never displayed back to users. Live validation failures are surfaced directly in AI Provider setup and Setup Health.
+Groq, Google Gemini, Mistral, and OpenAI API use the guild's own API key. Pixy runs provider-specific validation plus a small live generation probe before saving the credential encrypted, and the saved secret is never displayed back to users. Live validation failures are surfaced directly in AI Provider setup and Setup Health.
 
 OpenAI API uses the Responses API with `gpt-5.6-luna` as Pixy's default OpenAI model for cost-sensitive, high-volume ticket support. Servers can change the model after connecting a valid OpenAI API key.
 
-Each provider has a default model that is usable immediately after a valid credential is saved. **Change Model** verifies an alternate model against the connected provider account and runs the same live generation check before saving it.
+**ChatGPT Workspace Agent (Beta)** is a separate connection path for a guild that owns a published ChatGPT Workspace Agent. The guild supplies a Workspace Agent access token and the agent's `agtch_...` API Trigger ID. Pixy triggers the agent through the Workspace Agents API, then the agent returns its final answer through Pixy's MCP `send_ticket_reply` tool because the trigger API does not return the final answer body directly. Pixy performs that full trigger → MCP callback round trip before encrypting and saving the connection. The Workspace Agent's actual model is managed inside ChatGPT rather than through Pixy's **Change Model** control.
+
+For the normal API providers, each provider has a default model that is usable immediately after a valid credential is saved. **Change Model** verifies an alternate model against the connected provider account and runs the same live generation check before saving it.
 
 Switching providers clears the previous provider credential and model override so a credential from one provider cannot accidentally be reused with another provider.
+
+The Workspace Agent bridge requires Pixy's operator to publish a stable HTTPS `/mcp` endpoint. See [ChatGPT Workspace Agent bridge setup](docs/setup/WORKSPACE_AGENT.md).
 
 ### 3. Human Support
 
@@ -250,7 +255,8 @@ Every owner billing mutation uses the repository's transactional billing flow wi
 - Thread lifecycle actions are denied regardless of stale controls.
 - Human escalation uses safe notification and role-mention fallbacks.
 - Billing output sanitizes guild names and disables allowed mentions.
-- Passwords, Discord tokens, AI-provider keys, backup codes, and payment credentials must never be sent to payment owners or stored as learned content.
+- Passwords, Discord tokens, AI-provider keys, Workspace Agent access tokens, backup codes, and payment credentials must never be sent to payment owners or stored as learned content.
+- The Workspace Agent MCP bridge exposes only the scoped `send_ticket_reply` callback in the current Beta. Each callback is authorized by a random, short-lived, single-use delivery capability whose plaintext value is not stored at rest.
 
 ## Operational reset and data retention
 
@@ -261,7 +267,8 @@ Every owner billing mutation uses the repository's transactional billing flow wi
 - tracked tickets and exclusions,
 - support routes,
 - feature/safety settings,
-- encrypted provider credentials,
+- encrypted provider credentials and Workspace Agent connection data,
+- Workspace Agent bridge delivery records,
 - detailed AI usage logs.
 
 They intentionally retain minimal billing continuity:
@@ -279,7 +286,8 @@ The development command `npm run db:clear -- --confirm` is different: it clears 
 - discord.js 14
 - Prisma ORM 7
 - MySQL 8.4 locally and in production
-- Groq SDK for Groq plus native HTTPS integrations for Google Gemini, Mistral, and OpenAI API
+- Groq SDK for Groq plus native HTTPS integrations for Google Gemini, Mistral, OpenAI API, and ChatGPT Workspace Agent triggers
+- A small stateless HTTP MCP bridge for ChatGPT Workspace Agent reply callbacks
 
 ## Environment variables
 
@@ -297,13 +305,19 @@ VODAFONE_OWNER_ID=
 
 DATABASE_URL="mysql://pixy:pixy_local_password@127.0.0.1:3306/pixy"
 PIXY_CREDENTIAL_ENCRYPTION_KEY=
+
+# Optional: enables ChatGPT Workspace Agent (Beta)
+PIXY_PUBLIC_BASE_URL=
+PIXY_MCP_PORT=3100
 ```
 
 `OWNERS` is a comma-separated list of Discord user IDs authorized for silent owner-only prefix commands. Payment-owner IDs are Discord contact targets only; they are not payment account identifiers.
 
 `PIXY_CREDENTIAL_ENCRYPTION_KEY` must remain stable and be backed up separately from the database. A database backup without the matching key cannot recover encrypted guild provider credentials.
 
-Never commit Discord tokens, provider API keys, production database credentials, backups, payment information, or encryption keys.
+`PIXY_PUBLIC_BASE_URL` is optional. When set in production it must be a public HTTPS origin whose `/mcp` path reverse-proxies to Pixy's local `PIXY_MCP_PORT`. Without it, the normal API providers continue to work and the Workspace Agent bridge remains disabled. See `docs/setup/WORKSPACE_AGENT.md`.
+
+Never commit Discord tokens, provider API keys, Workspace Agent access tokens, production database credentials, backups, payment information, or encryption keys.
 
 ## Local development
 
@@ -350,8 +364,9 @@ See `docs/RELEASE_CHECKLIST.md` for the production smoke-test and rollout checkl
 - [Windows quick start](docs/setup/WINDOWS.md)
 - [Ubuntu quick start](docs/setup/UBUNTU.md)
 - [Setup troubleshooting](docs/setup/TROUBLESHOOTING.md)
+- [ChatGPT Workspace Agent bridge](docs/setup/WORKSPACE_AGENT.md)
 - [Setup guide index](docs/setup/README.md)
 
 ## Data handling
 
-Pixy stores guild/channel/thread/role IDs, server-provided knowledge, feature and routing settings, encrypted provider credentials, ticket state, AI usage diagnostics, billing state/dates, and billing audit events. Ticket context is sent to the guild-configured AI provider when a response is requested. See `PRIVACY_POLICY.md` for retention, sharing, and deletion details.
+Pixy stores guild/channel/thread/role IDs, server-provided knowledge, feature and routing settings, encrypted provider credentials/connections, ticket state, AI usage diagnostics, billing state/dates, and billing audit events. Ticket context is sent to the guild-configured AI provider when a response is requested. When ChatGPT Workspace Agent is selected, Pixy sends that context to the guild's published Workspace Agent and correlates its final MCP callback through short-lived bridge delivery state. See `PRIVACY_POLICY.md` for retention, sharing, and deletion details.
