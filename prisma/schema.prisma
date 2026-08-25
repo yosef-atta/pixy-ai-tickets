@@ -235,6 +235,24 @@ model GuildAllowedTerm {
   @@index([guildId])
 }
 
+model WorkspaceAgentDelivery {
+  id              String    @id @default(cuid()) @db.VarChar(191)
+  guildId         String    @db.VarChar(32)
+  tokenHash       String    @unique @db.Char(64)
+  triggerRunId    String?   @db.VarChar(191)
+  conversationUrl String?   @db.Text
+  status          String    @default("pending") @db.VarChar(32)
+  replyText       String?   @db.Text
+  error           String?   @db.Text
+  expiresAt       DateTime
+  deliveredAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([guildId, status, createdAt])
+  @@index([expiresAt])
+}
+
 model GuildBilling {
   id             String   @id @default(cuid()) @db.VarChar(191)
   guildId        String   @unique @db.VarChar(32)
