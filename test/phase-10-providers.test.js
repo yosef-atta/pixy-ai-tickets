@@ -25,6 +25,12 @@ const {
   validateOpenAiApiKey,
   validateOpenAiTextModel,
 } = require("../src/ai/providers/openaiProvider");
+const {
+  WORKSPACE_AGENT_CREDENTIAL_TYPE,
+} = require("../src/ai/providers/workspaceAgentProvider");
+const {
+  WORKSPACE_AGENT_MODEL,
+} = require("../src/ai/workspaceAgentBridge");
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -33,10 +39,10 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-test("production registry exposes Groq, Google Gemini, Mistral, and OpenAI API", () => {
+test("production registry exposes Groq, Google Gemini, Mistral, OpenAI API, and ChatGPT Workspace Agent", () => {
   assert.deepEqual(
     listAiProviders().map((provider) => provider.id),
-    ["groq", "google", "mistral", "openai"]
+    ["groq", "google", "mistral", "openai", "workspace_agent"]
   );
 
   const google = getAiProvider("GOOGLE");
@@ -53,6 +59,13 @@ test("production registry exposes Groq, Google Gemini, Mistral, and OpenAI API",
   assert.equal(openai.displayName, "OpenAI API");
   assert.equal(openai.defaultModel, DEFAULT_OPENAI_MODEL);
   assert.equal(openai.credentialType, "openai-api-key");
+
+  const workspaceAgent = getAiProvider("WORKSPACE_AGENT");
+  assert.equal(workspaceAgent.displayName, "ChatGPT Workspace Agent (Beta)");
+  assert.equal(workspaceAgent.defaultModel, WORKSPACE_AGENT_MODEL);
+  assert.equal(workspaceAgent.credentialType, WORKSPACE_AGENT_CREDENTIAL_TYPE);
+  assert.equal(workspaceAgent.supportsModelSelection, false);
+  assert.equal(workspaceAgent.deliveryMode, "mcp_callback");
 });
 
 test("Google request maps system and assistant messages to Gemini content roles", () => {
