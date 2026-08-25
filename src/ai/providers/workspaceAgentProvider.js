@@ -1,9 +1,11 @@
 const {
   WORKSPACE_AGENT_MODEL,
   WORKSPACE_AGENT_PROVIDER_ID,
-  generateWorkspaceAgentReply,
   parseWorkspaceAgentCredential,
 } = require("../workspaceAgentBridge");
+const {
+  generateWorkspaceAgentReplyWithActions,
+} = require("../workspaceAgentActionBridge");
 
 const WORKSPACE_AGENT_CREDENTIAL_TYPE = "workspace-agent-connection";
 
@@ -32,7 +34,7 @@ function createWorkspaceAgentProvider(options = {}) {
     },
 
     async generateReply(args = {}) {
-      return generateWorkspaceAgentReply({
+      return generateWorkspaceAgentReplyWithActions({
         ...args,
         ...(options.client ? { client: options.client } : {}),
         ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
