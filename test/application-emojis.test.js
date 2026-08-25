@@ -2,10 +2,12 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  APPLICATION_EMOJI_ITEM_ROUTE,
   BILLING_APPLICATION_EMOJIS,
   APPLICATION_EMOJI_ROUTE,
   formatBillingEmoji,
   getBillingEmoji,
+  getVersionedEmojiName,
   readEmojiDataUri,
   syncBillingApplicationEmojis,
 } = require("../src/config/applicationEmojis");
@@ -26,15 +28,20 @@ test("billing logo assets are valid Discord application-emoji data URIs", () => 
   assert.match(readEmojiDataUri(BILLING_APPLICATION_EMOJIS.orange.filePath), /^data:image\/png;base64,/);
 });
 
-test("application emoji sync reuses existing logos and creates only missing logos", async () => {
+test("application emoji sync keys managed emojis by asset content and removes stale versions", async () => {
   const calls = [];
   let nextId = 1000;
+  const paypalName = getVersionedEmojiName(BILLING_APPLICATION_EMOJIS.paypal);
+  const vodafoneName = getVersionedEmojiName(BILLING_APPLICATION_EMOJIS.vodafone);
+  const orangeName = getVersionedEmojiName(BILLING_APPLICATION_EMOJIS.orange);
   const rest = {
     async get(route) {
       calls.push(["get", route]);
       return {
         items: [
-          { id: "900", name: "pixy_paypal", animated: false },
+          { id: "900", name: paypalName, animated: false },
+          { id: "901", name: "pixy_paypal", animated: false },
+          { id: "902", name: "pixy_vodafone_cash_deadbeef", animated: false },
         ],
       };
     },
@@ -46,6 +53,9 @@ test("application emoji sync reuses existing logos and creates only missing logo
         animated: false,
       };
     },
+    async delete(route) {
+      calls.push(["delete", route]);
+    },
   };
 
   const synced = await syncBillingApplicationEmojis({
@@ -54,26 +64,110 @@ test("application emoji sync reuses existing logos and creates only missing logo
     rest,
   });
 
-  assert.deepEqual(calls.map((entry) => entry.slice(0, 2)), [
-    ["get", APPLICATION_EMOJI_ROUTE(CLIENT_ID)],
-    ["post", APPLICATION_EMOJI_ROUTE(CLIENT_ID)],
-    ["post", APPLICATION_EMOJI_ROUTE(CLIENT_ID)],
-  ]);
+  assert.deepEqual(
+    calls.filter((entry) => entry[0] === "post").map((entry) => entry[2]),
+    [vodafoneName, orangeName]
+  );
+  assert.deepEqual(
+    calls.filter((entry) => entry[0] === "delete").map((entry) => entry[1]),
+    [
+      APPLICATION_EMOJI_ITEM_ROUTE(CLIENT_ID, "901"),
+      APPLICATION_EMOJI_ITEM_ROUTE(CLIENT_ID, "902"),
+    ]
+  );
   assert.equal(synced.paypal.id, "900");
-  assert.equal(synced.vodafone.name, "pixy_vodafone_cash");
-  assert.equal(synced.orange.name, "pixy_orange_cash");
+  assert.equal(synced.paypal.name, paypalName);
+  assert.equal(synced.vodafone.name, vodafoneName);
+  assert.equal(synced.orange.name, orangeName);
   assert.deepEqual(getBillingEmoji(synced, "paypal"), synced.paypal);
   assert.equal(
     formatBillingEmoji(synced, "orange"),
-    `<:pixy_orange_cash:${synced.orange.id}>`
+    `<:${orangeName}:${synced.orange.id}>`
   );
+});
+
+test("changing an emoji file creates a new application emoji and retires the previous asset version", async () => {
+  const calls = [];
+  const definition = {
+    name: "pixy_test_logo",
+    filePath: "test-logo.png",
+    fallbackEmoji: "💳",
+  };
+  const oldName = getVersionedEmojiName(definition, () => Buffer.from("old-image"));
+  const newName = getVersionedEmojiName(definition, () => Buffer.from("new-image"));
+  const rest = {
+    async get() {
+      return {
+        items: [{ id: "700", name: oldName, animated: false }],
+      };
+    },
+    async post(route, options) {
+      calls.push(["post", route, options.body.name]);
+      return { id: "701", name: options.body.name, animated: false };
+    },
+    async delete(route) {
+      calls.push(["delete", route]);
+    },
+  };
+
+  const synced = await syncBillingApplicationEmojis({
+    token: "test-token",
+    clientId: CLIENT_ID,
+    rest,
+    definitions: { test: definition },
+    readFileSync: () => Buffer.from("new-image"),
+  });
+
+  assert.notEqual(oldName, newName);
+  assert.deepEqual(calls, [
+    ["post", APPLICATION_EMOJI_ROUTE(CLIENT_ID), newName],
+    ["delete", APPLICATION_EMOJI_ITEM_ROUTE(CLIENT_ID, "700")],
+  ]);
+  assert.equal(synced.test.id, "701");
+  assert.equal(synced.test.name, newName);
+});
+
+test("stale emoji cleanup failures do not discard the active synced emoji", async () => {
+  const warnings = [];
+  const definition = {
+    name: "pixy_test_logo",
+    filePath: "test-logo.png",
+    fallbackEmoji: "💳",
+  };
+  const activeName = getVersionedEmojiName(definition, () => Buffer.from("current-image"));
+  const rest = {
+    async get() {
+      return {
+        items: [
+          { id: "800", name: activeName, animated: false },
+          { id: "801", name: "pixy_test_logo_old", animated: false },
+        ],
+      };
+    },
+    async delete() {
+      throw new Error("Discord cleanup unavailable");
+    },
+  };
+
+  const synced = await syncBillingApplicationEmojis({
+    token: "test-token",
+    clientId: CLIENT_ID,
+    rest,
+    definitions: { test: definition },
+    readFileSync: () => Buffer.from("current-image"),
+    onWarning: (message) => warnings.push(message),
+  });
+
+  assert.equal(synced.test.id, "800");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Could not delete stale application emoji/);
 });
 
 test("pixy-billing select options use the synced PayPal, Vodafone Cash, and Orange Cash logos", () => {
   const appEmojis = {
-    paypal: { id: "111111111111111111", name: "pixy_paypal", animated: false },
-    vodafone: { id: "222222222222222222", name: "pixy_vodafone_cash", animated: false },
-    orange: { id: "333333333333333333", name: "pixy_orange_cash", animated: false },
+    paypal: { id: "111111111111111111", name: "pixy_paypal_a1b2c3d4", animated: false },
+    vodafone: { id: "222222222222222222", name: "pixy_vodafone_cash_a1b2c3d4", animated: false },
+    orange: { id: "333333333333333333", name: "pixy_orange_cash_a1b2c3d4", animated: false },
   };
   const summary = buildBillingSummary({
     guildId: GUILD_ID,
