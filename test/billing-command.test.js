@@ -137,7 +137,7 @@ const PAYMENT_LABEL_CASES = [
 ];
 
 for (const [name, billing, verb] of PAYMENT_LABEL_CASES) {
-  test(`${name} payment menu uses ${verb} labels for both methods`, () => {
+  test(`${name} payment menu uses ${verb} labels for all methods`, () => {
     const summary = summaryFor(billing);
     const payload = buildBillingPanelPayload({
       summary,
@@ -155,6 +155,7 @@ for (const [name, billing, verb] of PAYMENT_LABEL_CASES) {
       [
         ["paypal", `${verb} with PayPal`],
         ["vodafone", `${verb} with Vodafone Cash`],
+        ["orange", `${verb} with Orange Cash`],
       ]
     );
   });
@@ -293,6 +294,7 @@ function createPaymentInteraction({
 for (const [methodKey, ownerId, otherOwnerId, label] of [
   ["paypal", PAYPAL_OWNER_ID, VODAFONE_OWNER_ID, "PayPal"],
   ["vodafone", VODAFONE_OWNER_ID, PAYPAL_OWNER_ID, "Vodafone Cash"],
+  ["orange", VODAFONE_OWNER_ID, PAYPAL_OWNER_ID, "Orange Cash"],
 ]) {
   test(`${label} selection routes to its configured owner without automatic activation`, async () => {
     const interaction = createPaymentInteraction({ methodKey });
