@@ -23,20 +23,28 @@ const REQUIRED_ENV_KEYS = [
   "VODAFONE_OWNER_ID",
   "DATABASE_URL",
   "PIXY_CREDENTIAL_ENCRYPTION_KEY",
+  "PIXY_PUBLIC_BASE_URL",
+  "PIXY_MCP_PORT",
 ];
 const REQUIRED_RELEASE_FILES = [
   ".github/workflows/ci.yml",
   "docs/RELEASE_CHECKLIST.md",
+  "docs/setup/WORKSPACE_AGENT.md",
   "PRIVACY_POLICY.md",
   "README.md",
   "prisma/mysql-migrations/20260819163000_phase_1_data_foundation/migration.sql",
+  "prisma/mysql-migrations/20260825143100_workspace_agent_bridge/migration.sql",
   "src/ai/providers/groqProvider.js",
   "src/ai/providers/googleProvider.js",
   "src/ai/providers/mistralProvider.js",
   "src/ai/providers/openaiProvider.js",
+  "src/ai/providers/workspaceAgentProvider.js",
   "src/ai/providers/providerRegistry.js",
+  "src/ai/workspaceAgentBridge.js",
+  "src/http/workspaceAgentMcpServer.js",
   "test/phase-10-providers.test.js",
   "test/phase-10-knowledge.test.js",
+  "test/workspace-agent-bridge.test.js",
 ];
 
 function fail(message) {
@@ -109,12 +117,17 @@ function checkEnvExample() {
     "PAYPAL_OWNER_ID",
     "VODAFONE_OWNER_ID",
     "PIXY_CREDENTIAL_ENCRYPTION_KEY",
+    "PIXY_PUBLIC_BASE_URL",
   ];
   for (const key of secretKeys) {
     const match = envExample.match(new RegExp(`^${key}=(.*)$`, "m"));
     if (match && match[1].trim()) {
       fail(`.env.example must not contain a real or example value for ${key}.`);
     }
+  }
+
+  if (!/^PIXY_MCP_PORT=3100$/m.test(envExample)) {
+    fail(".env.example must keep PIXY_MCP_PORT=3100 as the documented local bridge default.");
   }
 }
 
@@ -137,10 +150,17 @@ function checkReleaseCopy() {
   const readme = read("README.md");
   const privacy = read("PRIVACY_POLICY.md");
   const checklist = read("docs/RELEASE_CHECKLIST.md");
+  const workspaceGuide = read("docs/setup/WORKSPACE_AGENT.md");
   const help = read("src/slash/help.js");
   const settings = read("src/slash/settings.js");
   const billing = read("src/slash/billing.js");
-  const providers = ["Groq", "Google Gemini", "Mistral", "OpenAI API"];
+  const providers = [
+    "Groq",
+    "Google Gemini",
+    "Mistral",
+    "OpenAI API",
+    "ChatGPT Workspace Agent",
+  ];
 
   for (const [label, text] of [["README", readme], ["Privacy Policy", privacy]]) {
     if (!/Thread Parent/i.test(text)) fail(`${label} must describe Thread Parent sources.`);
@@ -159,6 +179,9 @@ function checkReleaseCopy() {
   if (!/not exact FAQ matching/i.test(help)) {
     fail("/pixy-help must explain the semantic Knowledge behavior.");
   }
+  if (!/ChatGPT Workspace Agent/i.test(help) || !/MCP/i.test(help)) {
+    fail("/pixy-help must describe the ChatGPT Workspace Agent MCP bridge.");
+  }
   if (!/AI provider usage/i.test(billing) || /name:\s*"Groq usage"/.test(billing)) {
     fail("/pixy-billing must use provider-neutral AI usage copy.");
   }
@@ -168,6 +191,12 @@ function checkReleaseCopy() {
   }
   for (const provider of providers) {
     if (!checklist.includes(provider)) fail(`Release checklist must include a ${provider} smoke test.`);
+  }
+  if (!/WorkspaceAgentDelivery/.test(checklist) || !/PIXY_PUBLIC_BASE_URL/.test(checklist)) {
+    fail("Release checklist must cover Workspace Agent bridge deployment and delivery state.");
+  }
+  if (!/send_ticket_reply/.test(workspaceGuide) || !/delivery_token/.test(workspaceGuide)) {
+    fail("Workspace Agent setup guide must document the scoped MCP reply callback.");
   }
   if (!/Fresh-install end-to-end pass/i.test(checklist)) {
     fail("Release checklist must include the fresh-install end-to-end pass before partner rollout.");
