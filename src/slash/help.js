@@ -41,7 +41,7 @@ const TOPICS = Object.freeze([
   },
   {
     label: "AI Provider",
-    description: "Choose Groq, Google Gemini, Mistral, or OpenAI API and connect an API key",
+    description: "Choose an API provider or connect a ChatGPT Workspace Agent",
     value: PAGES.AI,
     emoji: "🤖",
   },
@@ -157,9 +157,9 @@ function quickStart(userId) {
       {
         name: "2. AI Provider",
         value: [
-          "Choose **Groq**, **Google Gemini**, **Mistral**, or **OpenAI API**.",
-          "Add that server's provider API key in `/pixy-setup`; Pixy validates it, encrypts it, and never displays the stored secret again.",
-          "The provider default model works immediately, or you can verify and choose another model before pressing Next.",
+          "Choose **Groq**, **Google Gemini**, **Mistral**, **OpenAI API**, or **ChatGPT Workspace Agent (Beta)**.",
+          "API providers use that server's own API key. The Workspace Agent path uses the server's Workspace Agent access token + `agtch_...` API Trigger ID and Pixy's MCP bridge.",
+          "Pixy runs a real validation before saving any provider connection encrypted.",
         ].join("\n"),
       },
       {
@@ -212,23 +212,27 @@ function ai(userId) {
   const embed = new EmbedBuilder()
     .setTitle("🤖 AI Provider")
     .setColor(0xfee75c)
-    .setDescription("Pixy currently supports four selectable providers: Groq, Google Gemini, Mistral, and OpenAI API.")
+    .setDescription("Pixy supports Groq, Google Gemini, Mistral, OpenAI API, and ChatGPT Workspace Agent (Beta).")
     .addFields(
       {
         name: "Choose a provider",
-        value: "Run `/pixy-setup` → **AI Provider** and select **Groq**, **Google Gemini**, **Mistral**, or **OpenAI API**. Switching providers clears the previous provider credential and model override so credentials cannot be reused across providers by mistake.",
+        value: "Run `/pixy-setup` → **AI Provider** and choose the provider owned by this server. Switching providers clears the previous provider credential/model override so credentials cannot be reused across providers by mistake.",
       },
       {
-        name: "Credential storage",
-        value: "Add the selected provider's guild-owned API key in the private modal. Pixy validates it before saving it encrypted, and the stored secret is never displayed back to users.",
+        name: "API providers",
+        value: "Groq, Google Gemini, Mistral, and OpenAI API use a guild-owned API key. Pixy live-tests the key before saving it encrypted and never displays the stored secret again.",
+      },
+      {
+        name: "ChatGPT Workspace Agent (Beta)",
+        value: "A published Workspace Agent can be triggered from Pixy using a Workspace Agent access token + `agtch_...` API Trigger ID. Its final answer returns through Pixy's MCP `send_ticket_reply` tool. Setup saves the connection only after that full round trip succeeds.",
       },
       {
         name: "Model selection",
-        value: "Each provider has a default model. **Change Model** verifies a model against the connected provider account before saving the override.",
+        value: "API providers expose a Pixy default model and **Change Model** validation. A ChatGPT Workspace Agent owns its model inside ChatGPT, so Pixy does not show model controls for that provider.",
       },
       {
         name: "Usage",
-        value: "The guild supplies its own provider credential and is responsible for that provider's usage limits and charges. Pixy does not provide a shared provider quota.",
+        value: "The guild supplies and controls its own provider/workspace connection and is responsible for the provider's availability, limits, and charges or workspace usage rules. Pixy does not provide a shared AI quota.",
       }
     );
   return panel(embed, userId);
@@ -360,8 +364,12 @@ function troubleshooting(userId) {
         value: "Run `/pixy-billing`. Expired mode keeps generic AI replies but blocks learned context/additions and premium agent actions.",
       },
       {
-        name: "Provider credential or model fails validation",
-        value: "Open `/pixy-setup` → **AI Provider**, confirm the correct provider is selected, replace its credential if needed, then use the default model or verify another model available to that account.",
+        name: "API provider credential or model fails validation",
+        value: "Open `/pixy-setup` → **AI Provider**, confirm the correct API provider is selected, replace its key if needed, then use the default model or verify another model available to that account.",
+      },
+      {
+        name: "Workspace Agent connection fails",
+        value: "Confirm the agent is published with an API channel, the `agtch_...` Trigger ID and Workspace Agent access token are correct, and the agent can reach Pixy's MCP endpoint and call `send_ticket_reply`. Pixy will not save the connection until the full callback test succeeds.",
       }
     );
   return panel(embed, userId);
