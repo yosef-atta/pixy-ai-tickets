@@ -12,6 +12,11 @@ const PROVIDERS = [
   { id: "google", displayName: "Google Gemini", defaultModel: "gemini-default" },
   { id: "mistral", displayName: "Mistral", defaultModel: "mistral-default" },
   { id: "openai", displayName: "OpenAI API", defaultModel: "openai-default" },
+  {
+    id: "workspace_agent",
+    displayName: "ChatGPT Workspace Agent (Beta)",
+    defaultModel: "workspace-agent",
+  },
 ];
 
 test("fresh onboarding AI Provider step is neutral and does not preselect a provider", () => {
@@ -25,6 +30,7 @@ test("fresh onboarding AI Provider step is neutral and does not preselect a prov
   assert.match(embed.fields[0].value, /Not selected yet/i);
   assert.equal(menu.placeholder, "Choose an AI provider...");
   assert.deepEqual(menu.options.map((option) => option.value), [
+    "workspace_agent",
     "google",
     "groq",
     "mistral",
@@ -37,7 +43,7 @@ test("fresh onboarding AI Provider step is neutral and does not preselect a prov
 test("provider choices use a stable neutral alphabetical order", () => {
   assert.deepEqual(
     orderedProviders(PROVIDERS).map((provider) => provider.displayName),
-    ["Google Gemini", "Groq", "Mistral", "OpenAI API"]
+    ["ChatGPT Workspace Agent (Beta)", "Google Gemini", "Groq", "Mistral", "OpenAI API"]
   );
 });
 
