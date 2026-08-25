@@ -41,7 +41,7 @@ const TOPICS = Object.freeze([
   },
   {
     label: "AI Provider",
-    description: "Choose Groq, Google Gemini, or Mistral and connect an API key",
+    description: "Choose Groq, Google Gemini, Mistral, or OpenAI API and connect an API key",
     value: PAGES.AI,
     emoji: "🤖",
   },
@@ -157,7 +157,7 @@ function quickStart(userId) {
       {
         name: "2. AI Provider",
         value: [
-          "Choose **Groq**, **Google Gemini**, or **Mistral**.",
+          "Choose **Groq**, **Google Gemini**, **Mistral**, or **OpenAI API**.",
           "Add that server's provider API key in `/pixy-setup`; Pixy validates it, encrypts it, and never displays the stored secret again.",
           "The provider default model works immediately, or you can verify and choose another model before pressing Next.",
         ].join("\n"),
@@ -212,11 +212,11 @@ function ai(userId) {
   const embed = new EmbedBuilder()
     .setTitle("🤖 AI Provider")
     .setColor(0xfee75c)
-    .setDescription("Pixy currently supports three selectable providers: Groq, Google Gemini, and Mistral.")
+    .setDescription("Pixy currently supports four selectable providers: Groq, Google Gemini, Mistral, and OpenAI API.")
     .addFields(
       {
         name: "Choose a provider",
-        value: "Run `/pixy-setup` → **AI Provider** and select **Groq**, **Google Gemini**, or **Mistral**. Switching providers clears the previous provider credential and model override so credentials cannot be reused across providers by mistake.",
+        value: "Run `/pixy-setup` → **AI Provider** and select **Groq**, **Google Gemini**, **Mistral**, or **OpenAI API**. Switching providers clears the previous provider credential and model override so credentials cannot be reused across providers by mistake.",
       },
       {
         name: "Credential storage",
