@@ -1,5 +1,8 @@
 const { Events } = require("discord.js");
 const {
+  syncBillingApplicationEmojis,
+} = require("../config/applicationEmojis");
+const {
   reconcileGuildTicketChannels,
 } = require("../tickets/ticketChannelLifecycle");
 
@@ -8,6 +11,21 @@ module.exports = {
 
   async execute(client) {
     console.log(`Bot is ready as ${client.user.tag}`);
+
+    try {
+      client.appEmojis = await syncBillingApplicationEmojis({
+        token: client.appEnv?.token,
+        clientId: client.appEnv?.clientId,
+      });
+      console.log(
+        `Synced ${Object.keys(client.appEmojis).length} Pixy billing application emoji(s).`
+      );
+    } catch (error) {
+      client.appEmojis = Object.freeze({});
+      console.warn(
+        `Billing application emoji sync failed; using Unicode fallbacks: ${error?.message || error}`
+      );
+    }
 
     for (const guild of client.guilds.cache.values()) {
       try {
