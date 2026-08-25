@@ -2,6 +2,7 @@ const { googleProvider } = require("./googleProvider");
 const { groqProvider } = require("./groqProvider");
 const { mistralProvider } = require("./mistralProvider");
 const { openaiProvider } = require("./openaiProvider");
+const { workspaceAgentProvider } = require("./workspaceAgentProvider");
 
 const PROVIDER_VALIDATION_PROMPT = "Hello";
 const PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS = 128;
@@ -100,6 +101,7 @@ const providerRegistry = createProviderRegistry([
   googleProvider,
   mistralProvider,
   openaiProvider,
+  workspaceAgentProvider,
 ]);
 
 function getAiProvider(providerId) {
@@ -125,11 +127,13 @@ async function runProviderProbe(provider, {
   modelId,
   messages,
   maxOutputTokens,
+  guildId,
 } = {}) {
   return provider.generateReply({
     messages,
     model: modelId,
     credential,
+    guildId,
     validationProbe: true,
     generation: {
       temperature: 0,
@@ -142,6 +146,7 @@ async function probeProviderGeneration(provider, {
   credential,
   modelId,
   messages,
+  guildId,
 } = {}) {
   if (!provider || typeof provider.generateReply !== "function") {
     throw new TypeError("A valid AI provider definition is required for a live validation probe.");
@@ -157,6 +162,7 @@ async function probeProviderGeneration(provider, {
     modelId: selectedModel,
     messages: probeMessages,
     maxOutputTokens: PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS,
+    guildId,
   });
 
   let text = String(result?.text || "").trim();
@@ -173,6 +179,7 @@ async function probeProviderGeneration(provider, {
       modelId: selectedModel,
       messages: probeMessages,
       maxOutputTokens: PROVIDER_VALIDATION_RETRY_OUTPUT_TOKENS,
+      guildId,
     });
     text = String(result?.text || "").trim();
   }
@@ -210,6 +217,7 @@ async function validateProviderCredential(providerId, credential, options = {}) 
     credential: normalizedCredential,
     modelId: options.modelId || provider.defaultModel,
     messages: options.messages,
+    guildId: options.guildId,
   });
 
   return {
@@ -227,6 +235,7 @@ async function validateProviderModel(providerId, {
   modelId,
   providerResolver,
   messages,
+  guildId,
 } = {}) {
   const resolveProvider = providerResolver || getAiProvider;
   const provider = resolveProvider(providerId);
@@ -245,6 +254,7 @@ async function validateProviderModel(providerId, {
     credential,
     modelId: normalizedModel,
     messages,
+    guildId,
   });
 
   return {
@@ -260,6 +270,7 @@ async function validateProviderModel(providerId, {
 
 async function listProviderModelOptions(providerId, credential) {
   const provider = getAiProvider(providerId);
+  if (provider.supportsModelSelection === false) return [];
   if (typeof provider.listModelOptions === "function") {
     const options = await provider.listModelOptions(credential);
     return Array.isArray(options) ? options : [];
