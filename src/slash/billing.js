@@ -28,6 +28,12 @@ const PAYMENT_METHODS = Object.freeze({
     emoji: "📱",
     ownerConfigKey: "vodafoneOwnerId",
   }),
+  orange: Object.freeze({
+    label: "Orange Cash",
+    description: "Contact the configured cash-payment owner.",
+    emoji: "📱",
+    ownerConfigKey: "vodafoneOwnerId",
+  }),
 });
 
 const PLAN_COLORS = Object.freeze({
