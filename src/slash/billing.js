@@ -11,6 +11,10 @@ const {
   BILLING_PLANS,
 } = require("../billing/constants");
 const { loadBillingSummary } = require("../billing/billingService");
+const {
+  formatBillingEmoji,
+  getBillingEmoji,
+} = require("../config/applicationEmojis");
 
 const EPHEMERAL = 64;
 const PAYMENT_SELECT_PREFIX = "billing_payment:";
@@ -19,19 +23,16 @@ const PAYMENT_METHODS = Object.freeze({
   paypal: Object.freeze({
     label: "PayPal",
     description: "Contact the configured PayPal owner.",
-    emoji: "💳",
     ownerConfigKey: "paypalOwnerId",
   }),
   vodafone: Object.freeze({
     label: "Vodafone Cash",
     description: "Contact the configured Vodafone Cash owner.",
-    emoji: "📱",
     ownerConfigKey: "vodafoneOwnerId",
   }),
   orange: Object.freeze({
     label: "Orange Cash",
     description: "Contact the configured cash-payment owner.",
-    emoji: "📱",
     ownerConfigKey: "vodafoneOwnerId",
   }),
 });
@@ -212,7 +213,7 @@ function buildBillingStatusEmbed({ summary, guildName, guildId }) {
   return embed;
 }
 
-function buildPaymentComponents(summary, userId) {
+function buildPaymentComponents(summary, userId, appEmojis = {}) {
   const verb = getPaymentVerb(summary);
   if (!verb) return [];
 
@@ -224,27 +225,40 @@ function buildPaymentComponents(summary, userId) {
         label: `${verb} with ${method.label}`,
         description: method.description,
         value,
-        emoji: method.emoji,
+        emoji: getBillingEmoji(appEmojis, value),
       }))
     );
 
   return [new ActionRowBuilder().addComponents(menu)];
 }
 
-function buildBillingPanelPayload({ summary, guildName, guildId, userId }) {
+function buildBillingPanelPayload({
+  summary,
+  guildName,
+  guildId,
+  userId,
+  appEmojis = {},
+}) {
   return {
     embeds: [buildBillingStatusEmbed({ summary, guildName, guildId })],
-    components: buildPaymentComponents(summary, userId),
+    components: buildPaymentComponents(summary, userId, appEmojis),
     allowedMentions: { parse: [] },
   };
 }
 
-function buildPaymentInstructions({ methodKey, ownerId, guildName, guildId }) {
+function buildPaymentInstructions({
+  methodKey,
+  ownerId,
+  guildName,
+  guildId,
+  appEmojis = {},
+}) {
   const method = PAYMENT_METHODS[methodKey];
   if (!method) return null;
 
+  const methodEmoji = formatBillingEmoji(appEmojis, methodKey);
   return [
-    `### ${method.emoji} ${method.label} contact`,
+    `### ${methodEmoji ? `${methodEmoji} ` : ""}${method.label} contact`,
     `Contact <@${ownerId}> to discuss manual Pixy Pro activation or renewal.`,
     "",
     "1. Open the owner profile from the mention above.",
@@ -308,6 +322,7 @@ async function handlePaymentSelection(interaction) {
       ownerId,
       guildName: interaction.guild.name,
       guildId: interaction.guild.id,
+      appEmojis: interaction.client?.appEmojis || {},
     }),
     flags: EPHEMERAL,
     allowedMentions: { parse: [] },
@@ -339,6 +354,7 @@ async function executeBillingCommand(interaction, options = {}) {
       guildName: interaction.guild.name,
       guildId: interaction.guild.id,
       userId: interaction.user.id,
+      appEmojis: interaction.client?.appEmojis || {},
     }),
     flags: EPHEMERAL,
   });
