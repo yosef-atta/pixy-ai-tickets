@@ -33,6 +33,7 @@ const REQUIRED_RELEASE_FILES = [
   "src/ai/providers/groqProvider.js",
   "src/ai/providers/googleProvider.js",
   "src/ai/providers/mistralProvider.js",
+  "src/ai/providers/openaiProvider.js",
   "src/ai/providers/providerRegistry.js",
   "test/phase-10-providers.test.js",
   "test/phase-10-knowledge.test.js",
@@ -139,11 +140,12 @@ function checkReleaseCopy() {
   const help = read("src/slash/help.js");
   const settings = read("src/slash/settings.js");
   const billing = read("src/slash/billing.js");
+  const providers = ["Groq", "Google Gemini", "Mistral", "OpenAI API"];
 
   for (const [label, text] of [["README", readme], ["Privacy Policy", privacy]]) {
     if (!/Thread Parent/i.test(text)) fail(`${label} must describe Thread Parent sources.`);
     if (!/\/pixy-reset/.test(text)) fail(`${label} must describe /pixy-reset.`);
-    for (const provider of ["Groq", "Google Gemini", "Mistral"]) {
+    for (const provider of providers) {
       if (!text.includes(provider)) fail(`${label} must describe the ${provider} provider.`);
     }
   }
@@ -164,7 +166,7 @@ function checkReleaseCopy() {
   if (!/billing/i.test(checklist) || !/reset/i.test(checklist) || !/thread/i.test(checklist)) {
     fail("Release checklist must cover billing, reset, and Thread smoke tests.");
   }
-  for (const provider of ["Groq", "Google Gemini", "Mistral"]) {
+  for (const provider of providers) {
     if (!checklist.includes(provider)) fail(`Release checklist must include a ${provider} smoke test.`);
   }
   if (!/Fresh-install end-to-end pass/i.test(checklist)) {

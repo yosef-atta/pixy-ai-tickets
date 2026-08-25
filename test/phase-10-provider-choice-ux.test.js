@@ -11,9 +11,10 @@ const PROVIDERS = [
   { id: "groq", displayName: "Groq", defaultModel: "groq-default" },
   { id: "google", displayName: "Google Gemini", defaultModel: "gemini-default" },
   { id: "mistral", displayName: "Mistral", defaultModel: "mistral-default" },
+  { id: "openai", displayName: "OpenAI API", defaultModel: "openai-default" },
 ];
 
-test("fresh onboarding AI Provider step is neutral and does not preselect Groq", () => {
+test("fresh onboarding AI Provider step is neutral and does not preselect a provider", () => {
   const payload = buildInitialProviderChoice("admin-user", "Saved 1 Ticket Source.", PROVIDERS);
   const embed = payload.embeds[0].toJSON();
   const menu = payload.components[0].toJSON().components[0];
@@ -27,6 +28,7 @@ test("fresh onboarding AI Provider step is neutral and does not preselect Groq",
     "google",
     "groq",
     "mistral",
+    "openai",
   ]);
   assert.equal(menu.options.some((option) => option.default === true), false);
   assert.equal(payload.components.length, 1);
@@ -35,7 +37,7 @@ test("fresh onboarding AI Provider step is neutral and does not preselect Groq",
 test("provider choices use a stable neutral alphabetical order", () => {
   assert.deepEqual(
     orderedProviders(PROVIDERS).map((provider) => provider.displayName),
-    ["Google Gemini", "Groq", "Mistral"]
+    ["Google Gemini", "Groq", "Mistral", "OpenAI API"]
   );
 });
 

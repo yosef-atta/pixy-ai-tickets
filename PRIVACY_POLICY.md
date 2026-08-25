@@ -1,6 +1,6 @@
 # Pixy Privacy Policy
 
-**Last updated: August 19, 2026**
+**Last updated: August 25, 2026**
 
 This Privacy Policy explains how **Pixy** (the “Bot”, “Pixy”, “we”, or “us”) collects, processes, stores, retains, and shares information when it is added to or used in a Discord server.
 
@@ -32,7 +32,7 @@ Thread tickets use Pixy's non-destructive Smart Overlay behavior for lifecycle s
 
 ### Guild-provided AI provider credentials and usage
 
-A server administrator may provide an AI provider credential for the server's AI requests. Pixy currently exposes **Groq**, **Google Gemini**, and **Mistral** as selectable AI providers.
+A server administrator may provide an AI provider credential for the server's AI requests. Pixy currently exposes **Groq**, **Google Gemini**, **Mistral**, and **OpenAI API** as selectable AI providers.
 
 - The credential is encrypted before database storage.
 - It is decrypted only when required for an authorized request.
@@ -122,7 +122,7 @@ Pixy receives Discord data through the Discord API. Discord independently contro
 
 ### AI providers
 
-When a guild requests an AI response, relevant ticket context and eligible server-provided knowledge may be sent to the configured AI provider using that guild's credential. Pixy currently supports Groq, Google Gemini, and Mistral in server setup. The selected provider processes requests according to its own policies, which administrators should review before enabling AI features.
+When a guild requests an AI response, relevant ticket context and eligible server-provided knowledge may be sent to the configured AI provider using that guild's credential. Pixy currently supports Groq, Google Gemini, Mistral, and OpenAI API in server setup. The selected provider processes requests according to its own policies, which administrators should review before enabling AI features.
 
 ### Hosting and database providers
 

@@ -19,7 +19,7 @@ test("public and operator documentation describes implemented billing behavior",
     "^partner add <guild-id>",
     "30-day months",
     "365-day years",
-    "Groq, Google Gemini, and Mistral",
+    "Groq, Google Gemini, Mistral, and OpenAI API",
   ]) {
     assert.match(readme, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -29,7 +29,7 @@ test("public and operator documentation describes implemented billing behavior",
     /PayPal/i,
     /Vodafone Cash/i,
     /does not collect payment/i,
-    /Last updated: August 19, 2026/i,
+    /Last updated: August 25, 2026/i,
   ]) {
     assert.match(privacy, expected);
   }

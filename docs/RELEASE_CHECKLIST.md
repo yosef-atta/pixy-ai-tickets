@@ -57,7 +57,7 @@ Use a test guild with no Pixy operational configuration.
 - [ ] Remove one source and confirm only the selected source is removed.
 - [ ] Confirm the wizard does not move to AI automatically after the first source.
 - [ ] Press **Next: AI Provider**.
-- [ ] Confirm the provider selector shows **Groq**, **Google Gemini**, and **Mistral**.
+- [ ] Confirm the provider selector shows **Groq**, **Google Gemini**, **Mistral**, and **OpenAI API**.
 - [ ] Switch between providers and confirm the previous provider credential/model override is cleared instead of being reused.
 - [ ] Confirm model controls stay unavailable until a valid credential is saved.
 - [ ] Submit an invalid credential for each provider being tested and confirm setup remains on the AI step without storing it.
@@ -76,8 +76,9 @@ For each available test account:
 - [ ] **Groq** — connect the key, create a fresh ticket, send a normal support question, and confirm a valid reply.
 - [ ] **Google Gemini** — connect the key, create a fresh ticket, send a normal support question, and confirm a valid reply.
 - [ ] **Mistral** — connect the key, create a fresh ticket, send a normal support question, and confirm a valid reply.
+- [ ] **OpenAI API** — connect the key, confirm the live setup probe passes, create a fresh ticket, send a normal support question, and confirm a valid reply.
 - [ ] Confirm provider/model usage logs identify the selected provider correctly on successful responses.
-- [ ] Trigger or simulate a provider error and confirm the usage log does not fall back to a Groq model when Google Gemini or Mistral is selected.
+- [ ] Trigger or simulate a provider error and confirm the usage log does not fall back to a Groq model when Google Gemini, Mistral, or OpenAI API is selected.
 - [ ] Confirm a 429/rate-limit response uses Pixy's provider-busy user message rather than crashing the ticket handler.
 - [ ] Confirm switching back to a provider requires that provider's own credential again.
 

@@ -41,7 +41,7 @@ Resetting Pixy, removing/reinviting the bot, or configuring it again does not cr
 - Ticket-level AI pause/resume controls
 - Per-ticket exclusions for tracked channels or threads
 - Built-in and guild-specific safety terms with allow exceptions
-- Selectable Groq, Google Gemini, and Mistral AI providers with encrypted guild credentials
+- Selectable Groq, Google Gemini, Mistral, and OpenAI API providers with encrypted guild credentials
 - Plan-aware controls and execution-time entitlement checks
 - Guild-isolated AI usage logs and operational reset
 - Manual Trial, Pro, and Partner billing with transactional audit records
@@ -66,8 +66,11 @@ Choose one of the providers exposed in setup:
 - **Groq**
 - **Google Gemini**
 - **Mistral**
+- **OpenAI API**
 
 The guild supplies its own API key for the selected provider. Pixy runs provider-specific validation plus a small live generation probe before saving the credential encrypted, and the saved secret is never displayed back to users. Live validation failures are surfaced directly in AI Provider setup and Setup Health.
+
+OpenAI API uses the Responses API with `gpt-5.6-luna` as Pixy's default OpenAI model for cost-sensitive, high-volume ticket support. Servers can change the model after connecting a valid OpenAI API key.
 
 Each provider has a default model that is usable immediately after a valid credential is saved. **Change Model** verifies an alternate model against the connected provider account and runs the same live generation check before saving it.
 
@@ -276,7 +279,7 @@ The development command `npm run db:clear -- --confirm` is different: it clears 
 - discord.js 14
 - Prisma ORM 7
 - MySQL 8.4 locally and in production
-- Groq SDK for Groq plus native HTTPS integrations for Google Gemini and Mistral
+- Groq SDK for Groq plus native HTTPS integrations for Google Gemini, Mistral, and OpenAI API
 
 ## Environment variables
 

@@ -1,6 +1,7 @@
 const { googleProvider } = require("./googleProvider");
 const { groqProvider } = require("./groqProvider");
 const { mistralProvider } = require("./mistralProvider");
+const { openaiProvider } = require("./openaiProvider");
 
 const PROVIDER_VALIDATION_PROMPT = "Hello";
 const PROVIDER_VALIDATION_MAX_OUTPUT_TOKENS = 128;
@@ -98,6 +99,7 @@ const providerRegistry = createProviderRegistry([
   groqProvider,
   googleProvider,
   mistralProvider,
+  openaiProvider,
 ]);
 
 function getAiProvider(providerId) {
