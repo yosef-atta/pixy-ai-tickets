@@ -1,5 +1,7 @@
 const { aiConfig } = require("../config/ai");
+const { ragConfig } = require("../config/rag");
 const { prisma } = require("../config/prisma");
+const { searchKnowledge } = require("./ragClient");
 const {
   DEFAULT_MAX_ADMIN_ROUTES,
   DEFAULT_MAX_LEARNED_ITEMS,
@@ -12,6 +14,59 @@ function cleanMessageContent(content) {
   return String(content || "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function extractQuestionFromText(text) {
+  const match = String(text || "").match(/^Question:\s*(.*?)(?:\nAnswer:|$)/is);
+  return match ? match[1].trim() : String(text || "").trim();
+}
+
+function extractAnswerFromText(text) {
+  const match = String(text || "").match(/\nAnswer:\s*([\s\S]*)$/i);
+  return match ? match[1].trim() : String(text || "").trim();
+}
+
+function buildCompositeSearchQuery(message, recentMessages = []) {
+  const currentContent = cleanMessageContent(message?.content);
+  const recentUserTexts = (recentMessages || [])
+    .slice(-3)
+    .map((m) => cleanMessageContent(m.content))
+    .filter(Boolean);
+
+  if (!recentUserTexts.length) return currentContent;
+  return [...new Set([...recentUserTexts, currentContent])].join("\n");
+}
+
+function parseRagResults(results = []) {
+  const learnedQna = [];
+  const learnedFreeform = [];
+
+  for (const r of results) {
+    const meta = r.metadata || {};
+    const itemType = (r.item_type || "").toLowerCase();
+
+    if (itemType === KNOWLEDGE_TYPE_QNA) {
+      const q = meta.question || r.title || extractQuestionFromText(r.text);
+      const a = meta.answer || extractAnswerFromText(r.text);
+      learnedQna.push({
+        id: r.item_id || r.id,
+        type: KNOWLEDGE_TYPE_QNA,
+        question: q,
+        answer: a,
+        score: r.score,
+      });
+    } else {
+      learnedFreeform.push({
+        id: r.item_id || r.id,
+        type: itemType || KNOWLEDGE_TYPE_FREEFORM,
+        title: r.title || meta.title || "Knowledge Snippet",
+        content: r.text || meta.content || "",
+        score: r.score,
+      });
+    }
+  }
+
+  return { learnedQna, learnedFreeform };
 }
 
 async function getRecentChannelMessages(channel, currentMessageId) {
@@ -166,15 +221,60 @@ async function buildTicketContext({
   includeAdminRoutes = true,
   client = prisma,
 }) {
-  const [recentMessages, learnedKnowledge, adminRoutes] = await Promise.all([
+  const guildId = message.guild?.id;
+  const [recentMessages, adminRoutes] = await Promise.all([
     getRecentChannelMessages(message.channel, message.id),
-    includeLearnedKnowledge
-      ? getLearnedKnowledge(message.guild?.id, { client })
-      : Promise.resolve({ learnedQna: [], learnedFreeform: [] }),
     includeAdminRoutes
       ? getAdminRoutes(message.guild, { client })
       : Promise.resolve([]),
   ]);
+
+  if (!includeLearnedKnowledge || !guildId) {
+    return {
+      guildName: message.guild?.name || null,
+      channelName: message.channel?.name || null,
+      recentMessages,
+      learnedQna: [],
+      learnedFreeform: [],
+      adminRoutes,
+      retrievalSource: "none",
+    };
+  }
+
+  // 1. Semantic RAG retrieval
+  if (ragConfig.enabled) {
+    try {
+      const query = buildCompositeSearchQuery(message, recentMessages);
+      if (query) {
+        const ragResult = await searchKnowledge({
+          guildId,
+          query,
+          topK: ragConfig.topK,
+          candidateK: ragConfig.candidateK,
+          minScore: ragConfig.minScore,
+        });
+
+        if (ragResult.ok && Array.isArray(ragResult.results) && ragResult.results.length > 0) {
+          const { learnedQna, learnedFreeform } = parseRagResults(ragResult.results);
+          return {
+            guildName: message.guild?.name || null,
+            channelName: message.channel?.name || null,
+            recentMessages,
+            learnedQna,
+            learnedFreeform,
+            adminRoutes,
+            retrievalSource: "rag",
+            ragCandidates: ragResult.totalCandidates,
+          };
+        }
+      }
+    } catch (ragError) {
+      console.warn("RAG retrieval attempt failed, falling back to database:", ragError?.message || ragError);
+    }
+  }
+
+  // 2. Fallback to MySQL database
+  const learnedKnowledge = await getLearnedKnowledge(guildId, { client });
 
   return {
     guildName: message.guild?.name || null,
@@ -183,13 +283,16 @@ async function buildTicketContext({
     learnedQna: learnedKnowledge.learnedQna,
     learnedFreeform: learnedKnowledge.learnedFreeform,
     adminRoutes,
+    retrievalSource: "mysql",
   };
 }
 
 module.exports = {
+  buildCompositeSearchQuery,
   buildTicketContext,
   cleanMessageContent,
   getAdminRoutes,
   getLearnedKnowledge,
   getRecentChannelMessages,
+  parseRagResults,
 };

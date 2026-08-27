@@ -19,9 +19,10 @@ const defaultAiConfig = Object.freeze({
   groq: Object.freeze({
     model: DEFAULT_GROQ_MODEL,
   }),
-  maxOutputTokens: 500,
+  maxOutputTokens: 2000,
   temperature: 0.3,
   replyCooldownMs: 3000,
+  minThinkingHoldMs: 3000,
   maxInputChars: 2500,
   recentMessagesLimit: 8,
   agentActionsEnabled: DEFAULT_GUILD_SETTINGS.agentActionsEnabled,

@@ -17,5 +17,16 @@ services:
       timeout: 5s
       retries: 20
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - pixy_qdrant_data:/qdrant/storage
+
 volumes:
   pixy_mysql_data:
+  pixy_qdrant_data:

@@ -1,5 +1,10 @@
 const { prisma } = require("../config/prisma");
 const { DEFAULT_MAX_LEARNED_ITEMS } = require("../config/productDefaults");
+const {
+  deleteKnowledge,
+  syncAllKnowledge,
+  upsertKnowledge,
+} = require("../ai/ragClient");
 
 const KNOWLEDGE_TYPE_QNA = "qna";
 const KNOWLEDGE_TYPE_FREEFORM = "freeform";
@@ -200,6 +205,8 @@ async function addKnowledgeQna(guildId, question, answer, options = {}) {
     },
   });
 
+  upsertKnowledge({ guildId, items: [item] }).catch(() => null);
+
   return {
     ok: true,
     item,
@@ -247,8 +254,9 @@ async function importKnowledgeQnaBulk(guildId, value, options = {}) {
 
   const toCreate = accepted.slice(0, remainingCapacity);
   const skippedForLimit = Math.max(0, accepted.length - toCreate.length);
+  const createdItems = [];
   for (const entry of toCreate) {
-    await client.learnedAnswer.create({
+    const created = await client.learnedAnswer.create({
       data: {
         guildId,
         type: KNOWLEDGE_TYPE_QNA,
@@ -256,6 +264,11 @@ async function importKnowledgeQnaBulk(guildId, value, options = {}) {
         answer: entry.answer,
       },
     });
+    createdItems.push(created);
+  }
+
+  if (createdItems.length > 0) {
+    upsertKnowledge({ guildId, items: createdItems }).catch(() => null);
   }
 
   return {
@@ -291,6 +304,8 @@ async function addKnowledgeFreeform(guildId, title, content, options = {}) {
     },
   });
 
+  upsertKnowledge({ guildId, items: [item] }).catch(() => null);
+
   return {
     ok: true,
     item,
@@ -310,12 +325,14 @@ async function deleteKnowledgeItem(guildId, itemId, options = {}) {
   if (!item) return { ok: false, code: "knowledge_item_not_found" };
 
   await client.learnedAnswer.delete({ where: { id: item.id } });
+  deleteKnowledge({ guildId, itemIds: [item.id] }).catch(() => null);
   return { ok: true, item };
 }
 
 async function clearKnowledge(guildId, options = {}) {
   const client = options.client || prisma;
   const result = await client.learnedAnswer.deleteMany({ where: { guildId } });
+  syncAllKnowledge({ guildId, clearExisting: true }).catch(() => null);
   return { ok: true, deleted: Number(result?.count || 0) };
 }
 

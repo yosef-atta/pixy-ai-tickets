@@ -259,7 +259,70 @@ const messageCreateEvent = {
       }
 
       await prisma.ticketChannel.update({ where: { channelId }, data: { lastUserMessageAt: new Date() } });
-      await message.channel.sendTyping();
+      await message.channel.sendTyping().catch(() => null);
+
+      const thinkingTimestamp = Math.floor(Date.now() / 1000);
+      const thinkingStartTime = Date.now();
+      let thinkingMessage = null;
+      try {
+        thinkingMessage = await message.reply({
+          content: `Pixy is **thinking**\n<t:${thinkingTimestamp}:R>`,
+          allowedMentions: { parse: [], repliedUser: false },
+        });
+      } catch (err) {
+        console.error("Failed to send thinking reply:", err);
+      }
+
+      async function waitMinimumThinkingHold() {
+        const elapsed = Date.now() - thinkingStartTime;
+        const minHold = Number(aiConfig.minThinkingHoldMs || 3000);
+        if (elapsed < minHold) {
+          await new Promise((resolve) => setTimeout(resolve, minHold - elapsed));
+        }
+      }
+
+      async function deliverAiReply(text) {
+        await waitMinimumThinkingHold();
+        const chunks = splitDiscordMessage(text);
+        if (!chunks.length) return;
+
+        let editedFirst = false;
+        if (thinkingMessage && typeof thinkingMessage.edit === "function") {
+          try {
+            await thinkingMessage.edit({
+              content: chunks[0],
+              allowedMentions: { parse: [], repliedUser: false },
+            });
+            editedFirst = true;
+          } catch (editError) {
+            console.error("Failed to edit thinking message:", editError);
+          }
+        }
+
+        if (!editedFirst) {
+          await safeReply(message, chunks[0]);
+        }
+
+        for (let i = 1; i < chunks.length; i++) {
+          await safeReply(message, chunks[i]);
+        }
+      }
+
+      async function deliverNotification(text) {
+        await waitMinimumThinkingHold();
+        if (thinkingMessage && typeof thinkingMessage.edit === "function") {
+          try {
+            await thinkingMessage.edit({
+              content: String(text || ""),
+              allowedMentions: { parse: [], repliedUser: false },
+            });
+            return;
+          } catch (editError) {
+            console.error("Failed to edit thinking message with notification:", editError);
+          }
+        }
+        await safeReply(message, text);
+      }
 
       const context = await buildTicketContext({
         message,
@@ -287,7 +350,7 @@ const messageCreateEvent = {
       } catch (error) {
         const status = getErrorStatus(error);
         await logAiUsage({ message, config, status: status === 429 ? "rate_limited" : "provider_error", error: error?.message || error });
-        await safeReply(message, t(lang, status === 429 ? "providerBusy" : "providerFailed"));
+        await deliverNotification(t(lang, status === 429 ? "providerBusy" : "providerFailed"));
         return;
       }
 
@@ -303,8 +366,7 @@ const messageCreateEvent = {
             : "invalid_action_json",
           error: parsed.error || aiResult.text,
         });
-        await safeReply(
-          message,
+        await deliverNotification(
           t(lang, assistantBlocked ? "assistantActionBlocked" : "invalidActionJson")
         );
         return;
@@ -319,7 +381,7 @@ const messageCreateEvent = {
             status: SUBSCRIPTION_BLOCKED_AGENT_OUTPUT_STATUS,
             error: "Assistant-only mode returned a ticket action request.",
           });
-          await safeReply(message, t(lang, "assistantActionBlocked"));
+          await deliverNotification(t(lang, "assistantActionBlocked"));
           return;
         }
 
@@ -334,13 +396,13 @@ const messageCreateEvent = {
             status: OPENING_CONTEXT_BLOCKED_ACTION_STATUS,
             error: `Imported opening context cannot run ${parsed.action}.`,
           });
-          await safeReply(message, t(lang, "actionFailed"));
+          await deliverNotification(t(lang, "actionFailed"));
           return;
         }
 
         if (!aiConfig.agentActionsEnabled) {
           await logAiUsage({ message, config, aiResult, status: "action_rejected:agent_disabled", error: "AI agent actions are disabled." });
-          await safeReply(message, t(lang, "actionFailed"));
+          await deliverNotification(t(lang, "actionFailed"));
           return;
         }
 
@@ -355,8 +417,7 @@ const messageCreateEvent = {
               `action_rejected:${agentAvailability.code}`,
             error: agentAvailability.code,
           });
-          await safeReply(
-            message,
+          await deliverNotification(
             getSubscriptionRejectionMessage(agentAvailability.code) ||
               t(lang, "actionFailed")
           );
@@ -365,7 +426,7 @@ const messageCreateEvent = {
 
         if (parsed.action === TICKET_ACTIONS.CLOSE_TICKET && !hasExplicitCloseIntent(userMessage)) {
           await logAiUsage({ message, config, aiResult, status: "action_rejected:close_not_explicit", error: "Current message did not explicitly request closing the ticket." });
-          await safeReply(message, t(lang, "actionFailed"));
+          await deliverNotification(t(lang, "actionFailed"));
           return;
         }
 
@@ -373,11 +434,17 @@ const messageCreateEvent = {
         const validation = await validateTicketAction({ actionRequest: parsed, message: actionMessage, ticket });
         if (!validation.ok) {
           await logAiUsage({ message, config, aiResult, status: `action_rejected:${validation.code}`, error: validation.code });
-          await safeReply(message, t(lang, "actionFailed"));
+          await deliverNotification(t(lang, "actionFailed"));
           return;
         }
 
         try {
+          await waitMinimumThinkingHold();
+          if (thinkingMessage && typeof thinkingMessage.delete === "function") {
+            await thinkingMessage.delete().catch(() => null);
+            thinkingMessage = null;
+          }
+
           const execution = await executeTicketAction({ actionRequest: parsed, validation, message: actionMessage });
           await logAiUsage({ message, config, aiResult, status: `action_success:${validation.action}` });
           if (validation.action !== TICKET_ACTIONS.CLOSE_TICKET && !execution.replySent && parsed.text) {
@@ -396,8 +463,7 @@ const messageCreateEvent = {
             error: error?.message || error,
           });
           console.error("AI ticket action execution failed:", error);
-          await safeReply(
-            message,
+          await deliverNotification(
             getSubscriptionRejectionMessage(error?.code) ||
               t(lang, "actionFailed")
           );
@@ -407,11 +473,11 @@ const messageCreateEvent = {
 
       if (!parsed.text) {
         await logAiUsage({ message, config, aiResult, status: "empty_response" });
-        await safeReply(message, t(lang, "emptyResponse"));
+        await deliverNotification(t(lang, "emptyResponse"));
         return;
       }
 
-      for (const chunk of splitDiscordMessage(parsed.text)) await safeReply(message, chunk);
+      await deliverAiReply(parsed.text);
       await prisma.ticketChannel.update({ where: { channelId }, data: { lastAiReplyAt: new Date() } });
       await logAiUsage({ message, config, aiResult, status: "success" });
     } catch (error) {
