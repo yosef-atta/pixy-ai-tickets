@@ -49,6 +49,7 @@ async function generateAiReply({
     messages,
     model: selectedModel,
     credential: selectedCredential,
+    guildId: resolvedGuildId,
     generation: {
       temperature: aiConfig.temperature,
       maxOutputTokens: aiConfig.maxOutputTokens,

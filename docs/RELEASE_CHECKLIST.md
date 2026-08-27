@@ -10,7 +10,8 @@ Use this checklist before promoting the consolidated Setup/Settings + Thread Sup
 - [ ] Confirm `DISCORD_TOKEN` and `DISCORD_CLIENT_ID` point to the intended Pixy application.
 - [ ] Confirm `DATABASE_URL` points to the intended production database.
 - [ ] Confirm `OWNERS`, `PAYPAL_OWNER_ID`, and `VODAFONE_OWNER_ID` contain Discord user IDs only.
-- [ ] Confirm no Discord token, provider API key, database password, backup, or encryption key is committed to the repository.
+- [ ] Confirm no Discord token, provider API key, Workspace Agent access token, database password, backup, or encryption key is committed to the repository.
+- [ ] If ChatGPT Workspace Agent (Beta) will be enabled, confirm `PIXY_PUBLIC_BASE_URL` is the intended public HTTPS origin and `/mcp` is reverse-proxied to local `PIXY_MCP_PORT`.
 - [ ] Run `npm ci`.
 - [ ] Run `npm run prisma:generate`.
 - [ ] Run `npm run check`.
@@ -21,6 +22,7 @@ Use this checklist before promoting the consolidated Setup/Settings + Thread Sup
 - [ ] Run `npm run prisma:migrate` (`prisma migrate deploy`).
 - [ ] Do **not** run `prisma migrate dev` against production.
 - [ ] Confirm the Phase 1 data-foundation migration is applied.
+- [ ] Confirm `20260825143100_workspace_agent_bridge` is applied and `WorkspaceAgentDelivery` exists.
 - [ ] Confirm existing single-category guilds retained their legacy category through `TicketSource` migration/fallback.
 - [ ] Run `npm run prisma:seed` only when the deployment environment expects the repository seed data.
 
@@ -57,19 +59,20 @@ Use a test guild with no Pixy operational configuration.
 - [ ] Remove one source and confirm only the selected source is removed.
 - [ ] Confirm the wizard does not move to AI automatically after the first source.
 - [ ] Press **Next: AI Provider**.
-- [ ] Confirm the provider selector shows **Groq**, **Google Gemini**, **Mistral**, and **OpenAI API**.
+- [ ] Confirm the provider selector shows **Groq**, **Google Gemini**, **Mistral**, **OpenAI API**, and **ChatGPT Workspace Agent (Beta)**.
 - [ ] Switch between providers and confirm the previous provider credential/model override is cleared instead of being reused.
-- [ ] Confirm model controls stay unavailable until a valid credential is saved.
-- [ ] Submit an invalid credential for each provider being tested and confirm setup remains on the AI step without storing it.
-- [ ] Submit a valid dedicated test credential and confirm it is accepted, encrypted, and never displayed back.
-- [ ] Verify the selected provider's default model works or verify/change an alternate model available to that account.
+- [ ] For normal API providers, confirm model controls stay unavailable until a valid credential is saved.
+- [ ] For ChatGPT Workspace Agent, confirm Pixy does not expose Change Model / Reset Model because the model is managed inside ChatGPT.
+- [ ] Submit an invalid credential/connection for each provider being tested and confirm setup remains on the AI step without storing it.
+- [ ] Submit a valid dedicated test credential/connection and confirm it is accepted, encrypted, and never displayed back.
+- [ ] Verify the selected API provider's default model works or verify/change an alternate model available to that account.
 - [ ] Press Next and configure Human Support, or explicitly choose **Skip for Now**.
 - [ ] Confirm the Trial starts only after onboarding completion.
 - [ ] Re-run `/pixy-setup` and confirm it opens the Setup Dashboard instead of restarting onboarding.
 
 ## 5. AI provider runtime smoke test
 
-Use dedicated non-production provider keys and do not paste them into tickets, Knowledge, logs, screenshots, or release notes.
+Use dedicated non-production provider credentials and do not paste them into tickets, Knowledge, logs, screenshots, or release notes.
 
 For each available test account:
 
@@ -77,12 +80,52 @@ For each available test account:
 - [ ] **Google Gemini** — connect the key, create a fresh ticket, send a normal support question, and confirm a valid reply.
 - [ ] **Mistral** — connect the key, create a fresh ticket, send a normal support question, and confirm a valid reply.
 - [ ] **OpenAI API** — connect the key, confirm the live setup probe passes, create a fresh ticket, send a normal support question, and confirm a valid reply.
+- [ ] **ChatGPT Workspace Agent** — complete the bridge checks in the next section, then create a fresh ticket and confirm the published Workspace Agent returns a valid reply through Pixy's MCP callback.
 - [ ] Confirm provider/model usage logs identify the selected provider correctly on successful responses.
-- [ ] Trigger or simulate a provider error and confirm the usage log does not fall back to a Groq model when Google Gemini, Mistral, or OpenAI API is selected.
+- [ ] Trigger or simulate a provider error and confirm the usage log does not fall back to a Groq model when another provider is selected.
 - [ ] Confirm a 429/rate-limit response uses Pixy's provider-busy user message rather than crashing the ticket handler.
 - [ ] Confirm switching back to a provider requires that provider's own credential again.
 
-## 6. Existing-server migration smoke test
+## 6. ChatGPT Workspace Agent bridge smoke test
+
+Use a disposable Workspace Agent and access token when possible. See `docs/setup/WORKSPACE_AGENT.md`.
+
+### Pixy host
+
+- [ ] Confirm `PIXY_PUBLIC_BASE_URL` uses public HTTPS in production.
+- [ ] Confirm Pixy's MCP listener binds locally on `127.0.0.1:PIXY_MCP_PORT` and does not require the raw port to be exposed directly.
+- [ ] Confirm the HTTPS reverse proxy routes public `/mcp` to Pixy's local `/mcp` endpoint.
+- [ ] Confirm the local MCP listener health endpoint returns success.
+- [ ] Confirm an MCP `initialize` request succeeds and `tools/list` exposes exactly one bridge tool: `send_ticket_reply`.
+- [ ] Confirm the MCP surface does not expose Close, Rename, Escalate, role management, arbitrary Discord messaging, or other broad Discord actions.
+
+### Workspace Agent setup
+
+- [ ] Publish the Workspace Agent with an **API** channel and obtain its `agtch_...` API Trigger ID.
+- [ ] Add Pixy's public MCP endpoint to the Workspace Agent and make `send_ticket_reply` available.
+- [ ] Configure the agent to call `send_ticket_reply` exactly once with the exact `delivery_token` from each Pixy trigger and the final answer in `reply`.
+- [ ] Create a dedicated Workspace Agent access token with the Workspace Agents scope.
+- [ ] Select **ChatGPT Workspace Agent (Beta)** in `/pixy-setup` and confirm the page shows the correct public Pixy MCP endpoint.
+- [ ] Enter a malformed Trigger ID and confirm Pixy rejects it without saving the connection.
+- [ ] Enter an invalid/revoked access token and confirm Pixy rejects it without saving the connection.
+- [ ] Enter the valid access token + Trigger ID and confirm Pixy runs a real trigger → MCP callback test before saving.
+- [ ] Confirm setup succeeds only after the Workspace Agent actually calls `send_ticket_reply`.
+- [ ] Confirm the saved Workspace Agent connection is encrypted and is never displayed back to Discord users.
+
+### Delivery security and runtime
+
+- [ ] Confirm a normal ticket message reaches the Workspace Agent and returns exactly one Discord reply.
+- [ ] Confirm the Workspace Agent response still passes through Pixy's normal response/safety/action validation pipeline.
+- [ ] Confirm a duplicate callback using the same delivery capability does not create a second Discord reply.
+- [ ] Confirm an expired or unknown delivery capability is rejected safely.
+- [ ] Confirm only a SHA-256 delivery-token hash is stored in `WorkspaceAgentDelivery`; the plaintext `delivery_token` must not appear in MySQL or application logs.
+- [ ] Confirm a reply that accidentally includes the current delivery token is redacted before it enters Pixy's Discord reply pipeline.
+- [ ] Confirm a failed Workspace Agent run produces a bounded provider error instead of hanging indefinitely.
+- [ ] Confirm a run that completes without calling `send_ticket_reply` fails after the callback grace period with a useful setup/runtime error.
+- [ ] Confirm the bridge times out safely when no callback arrives before expiry.
+- [ ] Confirm short-lived terminal `WorkspaceAgentDelivery` records are cleaned opportunistically and are removed by `/pixy-reset` / guild operational cleanup.
+
+## 7. Existing-server migration smoke test
 
 Use a guild configured before the multi-source/onboarding changes.
 
@@ -92,7 +135,7 @@ Use a guild configured before the multi-source/onboarding changes.
 - [ ] Confirm `/pixy-setup` does not grant another Trial.
 - [ ] Add a second Category and verify tickets under both Categories become eligible.
 
-## 7. Knowledge smoke test
+## 8. Knowledge smoke test
 
 Knowledge is reusable AI context, not an exact FAQ lookup table.
 
@@ -106,7 +149,7 @@ Knowledge is reusable AI context, not an exact FAQ lookup table.
 - [ ] Confirm incomplete pairs are skipped rather than having missing content invented.
 - [ ] Confirm the configured knowledge limit is respected during bulk import.
 
-## 8. Channel-ticket runtime smoke test
+## 9. Channel-ticket runtime smoke test
 
 - [ ] Create a new ticket channel under a configured Category after setup.
 - [ ] Confirm Pixy tracks it and posts/reuses one control message.
@@ -117,7 +160,7 @@ Knowledge is reusable AI context, not an exact FAQ lookup table.
 - [ ] Add an Excluded Ticket entry and confirm Pixy stops reading/replying in that ticket.
 - [ ] Remove the exclusion and confirm the valid ticket is reconciled/reactivated.
 
-## 9. Thread-ticket runtime smoke test
+## 10. Thread-ticket runtime smoke test
 
 Run at least one Public Thread and, when the ticket system supports it, one Private Thread.
 
@@ -133,7 +176,7 @@ Run at least one Public Thread and, when the ticket system supports it, one Priv
 - [ ] Confirm deleting the Discord Thread cleans up its Pixy ticket/exclusion records.
 - [ ] For a Private Thread, confirm the ticket system grants Pixy access to the specific Thread.
 
-## 10. Human Support smoke test
+## 11. Human Support smoke test
 
 - [ ] Configure an escalation category.
 - [ ] Confirm Pixy creates or reuses the notification channel when allowed.
@@ -143,7 +186,7 @@ Run at least one Public Thread and, when the ticket system supports it, one Priv
 - [ ] Test a non-mentionable support role without `MentionEveryone` and confirm the handoff still succeeds with a non-pinging fallback.
 - [ ] Confirm AI is paused after successful handoff.
 
-## 11. Full Ticket Control smoke test
+## 12. Full Ticket Control smoke test
 
 Run only in a dedicated test guild/category.
 
@@ -154,7 +197,7 @@ Run only in a dedicated test guild/category.
 - [ ] Confirm channel escalation can perform its allowed lifecycle changes and rolls back partial mutations when a later required step fails.
 - [ ] Confirm Thread tickets in the same guild remain Smart Overlay-only.
 
-## 12. Billing and entitlement smoke test
+## 13. Billing and entitlement smoke test
 
 - [ ] Check Trial behavior.
 - [ ] Check active Pro behavior.
@@ -163,7 +206,7 @@ Run only in a dedicated test guild/category.
 - [ ] Confirm stale ticket controls cannot bypass an entitlement downgrade.
 - [ ] Confirm billing mutations refresh open controls after commit on a best-effort basis.
 
-## 13. Permission model
+## 14. Permission model
 
 Baseline Category ticket operation should work with effective:
 
@@ -183,20 +226,22 @@ Additional notes:
 - [ ] Do not require `MentionEveryone` for Human Support to function.
 - [ ] Do not require broad `Manage Threads` merely to support Private Threads; prefer adding Pixy to each private ticket Thread.
 - [ ] Full Ticket Control may require Manage Channels / Manage Roles where its preflight explicitly reports them.
+- [ ] ChatGPT Workspace Agent does not require additional Discord permissions beyond the ticket behavior it is replacing; its extra boundary is the HTTPS MCP endpoint, not a Discord permission expansion.
 
-## 14. Reset smoke test
+## 15. Reset smoke test
 
 Use `/pixy-reset` only in a disposable test guild.
 
 - [ ] Confirm the command is Administrator-only.
 - [ ] Confirm it clearly lists the operational data that will be deleted.
 - [ ] Cancel once and verify no data changes.
-- [ ] Confirm once and verify operational configuration, Ticket Sources, Knowledge, routes, exclusions, safety settings, credential config, ticket records, and detailed usage logs are deleted.
+- [ ] Confirm once and verify operational configuration, Ticket Sources, Knowledge, routes, exclusions, safety settings, credential config, ticket records, detailed usage logs, and `WorkspaceAgentDelivery` rows are deleted.
+- [ ] Confirm a saved Workspace Agent access token / Trigger ID connection is removed with the other operational AI credentials.
 - [ ] Confirm Discord channels/threads/categories/roles are not deleted.
 - [ ] Confirm Trial/Pro/Partner continuity and billing audit rows are retained.
 - [ ] Reconfigure and confirm another Trial is not granted.
 
-## 15. Fresh-install end-to-end pass
+## 16. Fresh-install end-to-end pass
 
 Before contacting partners or moving the build to the production VPS, repeat the whole product flow once in a completely new disposable Discord server with no prior Pixy records:
 
@@ -204,6 +249,7 @@ Before contacting partners or moving the build to the production VPS, repeat the
 - [ ] Complete onboarding from zero.
 - [ ] Configure at least one Category source and one Thread Parent source.
 - [ ] Connect the provider intended for this test and verify a real AI reply.
+- [ ] If testing ChatGPT Workspace Agent, complete the full trigger → MCP callback setup/runtime smoke test instead of treating a local mock as sufficient.
 - [ ] Add semantic Knowledge and verify paraphrased questions use it.
 - [ ] Test channel tickets, public/private Threads where possible, pause/resume, Human Support, exclusions, Safety, and `/pixy-help`.
 - [ ] Verify `/pixy-billing` and Trial timing.
@@ -211,10 +257,11 @@ Before contacting partners or moving the build to the production VPS, repeat the
 - [ ] Review bot logs and AI usage rows for errors, wrong provider/model attribution, duplicate control panels, or secrets.
 - [ ] Only treat the build as partner-ready after this pass is clean.
 
-## 16. Final rollout
+## 17. Final rollout
 
 - [ ] Start Pixy and confirm startup reports exactly five public slash commands.
+- [ ] If `PIXY_PUBLIC_BASE_URL` is configured, confirm startup reports the local Workspace Agent MCP listener and the intended public `/mcp` URL.
 - [ ] Confirm startup reconciliation completes without repeated failures.
 - [ ] Watch logs during one channel ticket and one Thread ticket interaction.
-- [ ] Confirm no credential, token, private admin reason, or unexpected user content is logged as a secret.
+- [ ] Confirm no credential, Workspace Agent access token, plaintext delivery capability, private admin reason, or unexpected user content is logged as a secret.
 - [ ] Keep the database + encryption-key backup until the new build has been stable through the verification window.
