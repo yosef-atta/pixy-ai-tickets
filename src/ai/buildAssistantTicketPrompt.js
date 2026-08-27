@@ -70,11 +70,14 @@ function buildAssistantTicketPrompt({
     "- Never return JSON, an action request, an action schema, tool syntax, or code intended to trigger an application action.",
     "- Do not claim that an action was completed or will be completed.",
     "",
-    "Style:",
+    "Style & Discord Markdown rules (Strict):",
     "- Be concise, friendly, and practical.",
     "- Keep missing-server-knowledge fallbacks short and direct.",
-    "- Use only basic Discord Markdown when it improves readability.",
-    "- Do not use Markdown tables.",
+    "- Discord ONLY supports simple Markdown: **bold**, *italics*, bullet lists (-), numbered lists (1.), inline code (`code`), code blocks (```), and blockquotes (>).",
+    "- STRICTLY FORBIDDEN: NEVER output Markdown tables (e.g. | col | col | or |---|---|). Discord does not render tables.",
+    "- STRICTLY FORBIDDEN: NEVER output HTML tags like <br>, <div>, <span>, <p>, <table>. Discord does not support HTML.",
+    "- When listing items, features, or options, ALWAYS use clean bulleted lists with bold titles instead of tables.",
+    "- Prefer short paragraphs with single blank lines between sections.",
   ].join("\n");
 
   const contextBlock = [

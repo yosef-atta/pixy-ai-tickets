@@ -1,5 +1,25 @@
 const { ragConfig } = require("../config/rag");
 
+let lastConnectionFailureAt = 0;
+const OFFLINE_COOLDOWN_MS = 15000;
+
+function isTemporarilyOffline() {
+  return Date.now() - lastConnectionFailureAt < OFFLINE_COOLDOWN_MS;
+}
+
+function recordConnectionFailure(error) {
+  const now = Date.now();
+  if (now - lastConnectionFailureAt > OFFLINE_COOLDOWN_MS) {
+    const detail = error?.cause?.code || error?.code || error?.message || String(error);
+    console.warn(`[RAG Client] Python RAG microservice is offline at ${ragConfig.serviceUrl} (${detail}). Falling back to database.`);
+  }
+  lastConnectionFailureAt = now;
+}
+
+function recordConnectionSuccess() {
+  lastConnectionFailureAt = 0;
+}
+
 async function checkHealth({ timeoutMs = 2000 } = {}) {
   if (!ragConfig.enabled) {
     return { ok: false, enabled: false, error: "RAG is disabled in configuration" };
@@ -23,8 +43,10 @@ async function checkHealth({ timeoutMs = 2000 } = {}) {
     }
 
     const data = await response.json();
+    recordConnectionSuccess();
     return { ok: true, ...data };
   } catch (error) {
+    recordConnectionFailure(error);
     return {
       ok: false,
       error: error?.message || String(error),
@@ -33,7 +55,7 @@ async function checkHealth({ timeoutMs = 2000 } = {}) {
 }
 
 async function isRagAvailable() {
-  if (!ragConfig.enabled) return false;
+  if (!ragConfig.enabled || isTemporarilyOffline()) return false;
   const health = await checkHealth({ timeoutMs: 1500 });
   return health.ok && health.qdrant_connected;
 }
@@ -49,6 +71,10 @@ async function searchKnowledge({
 }) {
   if (!ragConfig.enabled || !guildId || !query) {
     return { ok: false, results: [], totalCandidates: 0, query: query || "", guildId: guildId || "" };
+  }
+
+  if (isTemporarilyOffline()) {
+    return { ok: false, error: "rag_service_offline", results: [] };
   }
 
   const url = `${ragConfig.serviceUrl}/api/search`;
@@ -78,11 +104,12 @@ async function searchKnowledge({
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
-      console.warn(`RAG search failed [${response.status}]: ${errText}`);
+      console.warn(`[RAG Client] Search returned status ${response.status}: ${errText}`);
       return { ok: false, error: `HTTP ${response.status}: ${errText}`, results: [] };
     }
 
     const data = await response.json();
+    recordConnectionSuccess();
     return {
       ok: true,
       results: Array.isArray(data.results) ? data.results : [],
@@ -91,7 +118,7 @@ async function searchKnowledge({
       guildId: data.guild_id || guildId,
     };
   } catch (error) {
-    console.warn(`RAG search error for guild ${guildId}: ${error?.message || error}`);
+    recordConnectionFailure(error);
     return {
       ok: false,
       error: error?.message || String(error),
@@ -107,6 +134,10 @@ async function upsertKnowledge({
 }) {
   if (!ragConfig.enabled || !guildId || !Array.isArray(items) || items.length === 0) {
     return { ok: false, upsertedItems: 0, upsertedChunks: 0 };
+  }
+
+  if (isTemporarilyOffline()) {
+    return { ok: false, error: "rag_service_offline" };
   }
 
   const url = `${ragConfig.serviceUrl}/api/upsert`;
@@ -144,18 +175,19 @@ async function upsertKnowledge({
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
-      console.warn(`RAG upsert failed [${response.status}]: ${errText}`);
+      console.warn(`[RAG Client] Upsert returned status ${response.status}: ${errText}`);
       return { ok: false, error: `HTTP ${response.status}: ${errText}` };
     }
 
     const data = await response.json();
+    recordConnectionSuccess();
     return {
       ok: true,
       upsertedItems: data.upserted_items || 0,
       upsertedChunks: data.upserted_chunks || 0,
     };
   } catch (error) {
-    console.warn(`RAG upsert error for guild ${guildId}: ${error?.message || error}`);
+    recordConnectionFailure(error);
     return {
       ok: false,
       error: error?.message || String(error),
@@ -170,6 +202,10 @@ async function deleteKnowledge({
 }) {
   if (!ragConfig.enabled || !guildId || !Array.isArray(itemIds) || itemIds.length === 0) {
     return { ok: false, deletedItemIds: [] };
+  }
+
+  if (isTemporarilyOffline()) {
+    return { ok: false, error: "rag_service_offline" };
   }
 
   const url = `${ragConfig.serviceUrl}/api/delete`;
@@ -190,17 +226,18 @@ async function deleteKnowledge({
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
-      console.warn(`RAG delete failed [${response.status}]: ${errText}`);
+      console.warn(`[RAG Client] Delete returned status ${response.status}: ${errText}`);
       return { ok: false, error: `HTTP ${response.status}: ${errText}` };
     }
 
     const data = await response.json();
+    recordConnectionSuccess();
     return {
       ok: true,
       deletedItemIds: data.deleted_item_ids || [],
     };
   } catch (error) {
-    console.warn(`RAG delete error for guild ${guildId}: ${error?.message || error}`);
+    recordConnectionFailure(error);
     return {
       ok: false,
       error: error?.message || String(error),
@@ -216,6 +253,10 @@ async function syncAllKnowledge({
 }) {
   if (!ragConfig.enabled) {
     return { ok: false, error: "RAG is disabled" };
+  }
+
+  if (isTemporarilyOffline()) {
+    return { ok: false, error: "rag_service_offline" };
   }
 
   const url = `${ragConfig.serviceUrl}/api/sync-all`;
@@ -257,18 +298,19 @@ async function syncAllKnowledge({
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
-      console.warn(`RAG sync-all failed [${response.status}]: ${errText}`);
+      console.warn(`[RAG Client] Sync-all returned status ${response.status}: ${errText}`);
       return { ok: false, error: `HTTP ${response.status}: ${errText}` };
     }
 
     const data = await response.json();
+    recordConnectionSuccess();
     return {
       ok: true,
       syncedItems: data.synced_items || 0,
       syncedChunks: data.synced_chunks || 0,
     };
   } catch (error) {
-    console.warn(`RAG sync-all error: ${error?.message || error}`);
+    recordConnectionFailure(error);
     return {
       ok: false,
       error: error?.message || String(error),
