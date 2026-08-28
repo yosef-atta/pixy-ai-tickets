@@ -109,15 +109,54 @@ async function applyFullControlEscalation({ message, role, categoryId, name, aud
       { reason: auditReason }
     );
 
-    if (message.channel.parentId !== categoryId) {
-      await message.channel.setParent(categoryId, {
-        lockPermissions: false,
-        reason: auditReason,
-      });
-    }
+    const needsParentChange = message.channel.parentId !== categoryId;
+    const needsNameChange = Boolean(name && name !== message.channel.name);
 
-    if (name && name !== message.channel.name) {
-      await message.channel.setName(name, auditReason);
+    if (typeof message.channel.edit === "function") {
+      const editPayload = {};
+      if (needsParentChange) {
+        editPayload.parent = categoryId;
+        editPayload.lockPermissions = false;
+      }
+      if (needsNameChange) {
+        editPayload.name = name;
+      }
+
+      if (Object.keys(editPayload).length > 0) {
+        try {
+          await message.channel.edit(editPayload, auditReason);
+        } catch (editError) {
+          // If editing both name and parent fails (e.g. Discord channel rename 10-minute rate limit),
+          // fallback to changing parent category only so the escalation succeeds.
+          if (editPayload.parent && editPayload.name) {
+            if (typeof message.channel.setParent === "function") {
+              await message.channel.setParent(categoryId, {
+                lockPermissions: false,
+                reason: auditReason,
+              });
+            } else {
+              await message.channel.edit({ parent: categoryId, lockPermissions: false }, auditReason);
+            }
+          } else {
+            throw editError;
+          }
+        }
+      }
+    } else {
+      if (needsParentChange) {
+        await message.channel.setParent(categoryId, {
+          lockPermissions: false,
+          reason: auditReason,
+        });
+      }
+
+      if (needsNameChange) {
+        try {
+          await message.channel.setName(name, auditReason);
+        } catch (nameError) {
+          console.warn("Channel rename during escalation was skipped due to Discord rate limits:", nameError?.message || nameError);
+        }
+      }
     }
 
     return state;
