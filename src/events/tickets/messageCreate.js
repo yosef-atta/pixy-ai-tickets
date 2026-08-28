@@ -258,7 +258,16 @@ const messageCreateEvent = {
         return;
       }
 
-      await prisma.ticketChannel.update({ where: { channelId }, data: { lastUserMessageAt: new Date() } });
+      await prisma.ticketChannel.upsert({
+        where: { channelId },
+        update: { lastUserMessageAt: new Date() },
+        create: {
+          guildId,
+          channelId,
+          userId: message.author?.id || null,
+          lastUserMessageAt: new Date(),
+        },
+      }).catch(() => null);
       await message.channel.sendTyping().catch(() => null);
 
       const thinkingTimestamp = Math.floor(Date.now() / 1000);
@@ -449,7 +458,16 @@ const messageCreateEvent = {
           await logAiUsage({ message, config, aiResult, status: `action_success:${validation.action}` });
           if (validation.action !== TICKET_ACTIONS.CLOSE_TICKET && !execution.replySent && parsed.text) {
             await safeReply(message, String(parsed.text).slice(0, Number(aiConfig.actionMaxReplyChars || 1000)));
-            await prisma.ticketChannel.update({ where: { channelId }, data: { lastAiReplyAt: new Date() } });
+            await prisma.ticketChannel.upsert({
+              where: { channelId },
+              update: { lastAiReplyAt: new Date() },
+              create: {
+                guildId,
+                channelId,
+                userId: message.author?.id || null,
+                lastAiReplyAt: new Date(),
+              },
+            }).catch(() => null);
           }
         } catch (error) {
           const subscriptionStatus = getSubscriptionRejectionStatus(error?.code);
@@ -478,7 +496,16 @@ const messageCreateEvent = {
       }
 
       await deliverAiReply(parsed.text);
-      await prisma.ticketChannel.update({ where: { channelId }, data: { lastAiReplyAt: new Date() } });
+      await prisma.ticketChannel.upsert({
+        where: { channelId },
+        update: { lastAiReplyAt: new Date() },
+        create: {
+          guildId,
+          channelId,
+          userId: message.author?.id || null,
+          lastAiReplyAt: new Date(),
+        },
+      }).catch(() => null);
       await logAiUsage({ message, config, aiResult, status: "success" });
     } catch (error) {
       console.error("MessageCreate AI ticket handler failed:", error);
