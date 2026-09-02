@@ -3,6 +3,10 @@ const { ragConfig } = require("../config/rag");
 const { prisma } = require("../config/prisma");
 const { searchTicketContext } = require("./ragClient");
 const {
+  getRecentChannelMessages,
+  resolvePixyUserId,
+} = require("./conversationHistory");
+const {
   DEFAULT_MAX_ADMIN_ROUTES,
   DEFAULT_MAX_LEARNED_ITEMS,
 } = require("../config/productDefaults");
@@ -37,12 +41,13 @@ function extractAnswerFromText(text) {
 function buildCompositeSearchQuery(message, recentMessages = []) {
   const currentContent = cleanMessageContent(message?.content);
   const recentUserTexts = (recentMessages || [])
+    .filter((messageItem) => messageItem?.speakerType !== "assistant")
     .slice(-3)
     .map((messageItem) => cleanMessageContent(messageItem.content))
     .filter(Boolean);
 
   if (!recentUserTexts.length) return currentContent;
-  return [...new Set([...recentUserTexts, currentContent])].join("\n");
+  return [...new Set([...recentUserTexts, currentContent].filter(Boolean))].join("\n");
 }
 
 function parseRagResults(results = []) {
@@ -107,28 +112,6 @@ async function parseRagAdminRoutes(results = [], guild) {
   }
 
   return routes;
-}
-
-async function getRecentChannelMessages(channel, currentMessageId) {
-  try {
-    const fetched = await channel.messages.fetch({
-      limit: aiConfig.recentMessagesLimit + 3,
-    });
-
-    return Array.from(fetched.values())
-      .filter((messageItem) => messageItem.id !== currentMessageId)
-      .filter((messageItem) => !messageItem.author?.bot)
-      .filter((messageItem) => cleanMessageContent(messageItem.content).length > 0)
-      .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-      .slice(-aiConfig.recentMessagesLimit)
-      .map((messageItem) => ({
-        authorName: messageItem.member?.displayName || messageItem.author?.username || "User",
-        content: cleanMessageContent(messageItem.content).slice(0, 500),
-      }));
-  } catch (error) {
-    console.error("Failed to fetch recent ticket messages:", error);
-    return [];
-  }
 }
 
 async function getLearnedKnowledge(guildId, options = {}) {
@@ -255,9 +238,14 @@ async function buildTicketContext({
   searchContext = searchTicketContext,
 }) {
   const guildId = message.guild?.id;
+  const pixyUserId = resolvePixyUserId({
+    message,
+    channel: message.channel,
+  });
   const recentMessages = await getRecentChannelMessages(
     message.channel,
-    message.id
+    message.id,
+    { pixyUserId }
   );
   const query = buildCompositeSearchQuery(message, recentMessages);
 
