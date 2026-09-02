@@ -49,19 +49,17 @@ test("Arabic and English short negatives are classified as negative", () => {
 test("affirmative reply after Pixy offer creates a do-not-repeat continuation signal", () => {
   const hint = buildShortReplyContinuationHint(recentPixyOffer(), "تمام");
 
-  assert.equal(hint.role, "system");
-  assert.match(hint.content, /short affirmative response/);
-  assert.match(hint.content, /continue with the offered next step immediately/);
-  assert.match(hint.content, /Do not repeat the same question or offer/);
-  assert.match(hint.content, /never bypasses grounding, safety, entitlement, or application action validation rules/);
+  assert.match(hint, /short affirmative response/);
+  assert.match(hint, /continue with the offered next step immediately/);
+  assert.match(hint, /Do not repeat the same question or offer/);
+  assert.match(hint, /never bypasses grounding, safety, entitlement, or application action validation rules/);
 });
 
 test("negative reply after Pixy offer creates a rejection continuation signal", () => {
   const hint = buildShortReplyContinuationHint(recentPixyOffer(), "لا");
 
-  assert.equal(hint.role, "system");
-  assert.match(hint.content, /short negative response/);
-  assert.match(hint.content, /treat the reply as a rejection/);
+  assert.match(hint, /short negative response/);
+  assert.match(hint, /treat the reply as a rejection/);
 });
 
 test("short reply is not linked to an older Pixy turn when the immediately previous turn is another user", () => {
@@ -77,7 +75,7 @@ test("short reply is not linked to an older Pixy turn when the immediately previ
   assert.equal(hint, null);
 });
 
-test("premium prompt sends the affirmative state note plus native dialogue roles before current reply", () => {
+test("premium prompt keeps the affirmative signal in primary system policy and native dialogue roles before current reply", () => {
   const messages = buildTicketPrompt({
     guildName: "Example Guild",
     channelName: "ticket-help",
@@ -93,12 +91,12 @@ test("premium prompt sends the affirmative state note plus native dialogue roles
   const historicalAssistantIndex = messages.findIndex(
     (message) => message.role === "assistant" && /هل تحب أن أساعدك/.test(message.content)
   );
-  const hintIndex = messages.findIndex(
-    (message) => message.role === "system" && /short affirmative response/.test(message.content)
-  );
 
-  assert.ok(hintIndex > 0);
-  assert.ok(historicalAssistantIndex > hintIndex);
+  assert.equal(messages[0].role, "system");
+  assert.match(messages[0].content, /short affirmative response/);
+  assert.match(messages[0].content, /Do not repeat the same question or offer/);
+  assert.equal(messages.filter((message) => message.role === "system").length, 1);
+  assert.ok(historicalAssistantIndex > 1);
   assert.ok(historicalAssistantIndex < currentIndex);
   assert.equal(messages[currentIndex].role, "user");
   assert.match(messages[currentIndex].content, /تمام/);
@@ -115,6 +113,7 @@ test("assistant-only prompt gets the same affirmative conversation signal withou
   });
   const text = messages.map((message) => message.content).join("\n\n");
 
+  assert.equal(messages.filter((message) => message.role === "system").length, 1);
   assert.match(systemTexts(messages), /short affirmative response/);
   assert.doesNotMatch(text, /close_ticket/);
   assert.doesNotMatch(text, /rename_ticket/);
