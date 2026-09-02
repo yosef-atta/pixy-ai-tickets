@@ -3,6 +3,59 @@ const {
   cleanConversationContent,
 } = require("./conversationHistory");
 
+const AFFIRMATIVE_SHORT_REPLIES = new Set([
+  "تمام",
+  "ايوه",
+  "أيوه",
+  "ايوا",
+  "أيوة",
+  "اه",
+  "آه",
+  "نعم",
+  "ماشي",
+  "اوك",
+  "أوك",
+  "اوكي",
+  "أوكي",
+  "yes",
+  "yeah",
+  "yep",
+  "yup",
+  "ok",
+  "okay",
+  "sure",
+  "sounds good",
+  "go ahead",
+  "do it",
+]);
+
+const NEGATIVE_SHORT_REPLIES = new Set([
+  "لا",
+  "لأ",
+  "مش دلوقتي",
+  "لا شكرا",
+  "لا شكرًا",
+  "no",
+  "nope",
+  "nah",
+  "not now",
+  "no thanks",
+]);
+
+function normalizeShortReply(value) {
+  return cleanConversationContent(value)
+    .toLowerCase()
+    .replace(/[!?.،؟]+/g, "")
+    .trim();
+}
+
+function classifyShortReply(value) {
+  const normalized = normalizeShortReply(value);
+  if (AFFIRMATIVE_SHORT_REPLIES.has(normalized)) return "affirmative";
+  if (NEGATIVE_SHORT_REPLIES.has(normalized)) return "negative";
+  return null;
+}
+
 function buildConversationRoleMessages(recentMessages = []) {
   return (recentMessages || [])
     .map((messageItem) => {
@@ -24,6 +77,37 @@ function buildConversationRoleMessages(recentMessages = []) {
       };
     })
     .filter(Boolean);
+}
+
+function buildShortReplyContinuationHint(recentMessages = [], currentUserMessage = "") {
+  const signal = classifyShortReply(currentUserMessage);
+  if (!signal || !recentMessages.length) return null;
+
+  const previousTurn = recentMessages[recentMessages.length - 1];
+  if (previousTurn?.speakerType !== SPEAKER_TYPES.ASSISTANT) return null;
+
+  if (signal === "affirmative") {
+    return {
+      role: "system",
+      content: [
+        "Conversation state note:",
+        "- The current user message is a short affirmative response to the immediately preceding Pixy AI turn.",
+        "- When that preceding turn is a yes/no question, confirmation, or offer, treat the reply as acceptance and continue with the offered next step immediately.",
+        "- Do not repeat the same question or offer after it has just been accepted.",
+        "- This note resolves dialogue intent only. It does not make previous Pixy claims authoritative and it never bypasses grounding, safety, entitlement, or application action validation rules.",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    role: "system",
+    content: [
+      "Conversation state note:",
+      "- The current user message is a short negative response to the immediately preceding Pixy AI turn.",
+      "- When that preceding turn is a yes/no question, confirmation, or offer, treat the reply as a rejection and continue appropriately without repeating the same offer immediately.",
+      "- This note resolves dialogue intent only. It does not make previous Pixy claims authoritative and it never bypasses grounding, safety, entitlement, or application action validation rules.",
+    ].join("\n"),
+  };
 }
 
 function stripEmbeddedRecentConversation(content, nextHeading = null) {
@@ -48,11 +132,15 @@ function stripEmbeddedRecentConversation(content, nextHeading = null) {
 function promoteRecentConversation(
   messages,
   recentMessages = [],
-  { nextContextHeading = null } = {}
+  { nextContextHeading = null, currentUserMessage = "" } = {}
 ) {
   if (!Array.isArray(messages) || messages.length < 3) return messages;
 
   const roleMessages = buildConversationRoleMessages(recentMessages);
+  const continuationHint = buildShortReplyContinuationHint(
+    recentMessages,
+    currentUserMessage
+  );
   const output = messages.map((message) => ({ ...message }));
 
   if (output[0]?.role === "system") {
@@ -73,11 +161,21 @@ function promoteRecentConversation(
   }
 
   const currentMessage = output.pop();
-  return [...output, ...roleMessages, currentMessage];
+  return [
+    ...output,
+    ...(continuationHint ? [continuationHint] : []),
+    ...roleMessages,
+    currentMessage,
+  ];
 }
 
 module.exports = {
+  AFFIRMATIVE_SHORT_REPLIES,
+  NEGATIVE_SHORT_REPLIES,
   buildConversationRoleMessages,
+  buildShortReplyContinuationHint,
+  classifyShortReply,
+  normalizeShortReply,
   promoteRecentConversation,
   stripEmbeddedRecentConversation,
 };
