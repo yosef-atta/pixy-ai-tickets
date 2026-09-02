@@ -1,7 +1,7 @@
 const { aiConfig } = require("../config/ai");
 const { ragConfig } = require("../config/rag");
 const { prisma } = require("../config/prisma");
-const { searchKnowledge } = require("./ragClient");
+const { searchTicketContext } = require("./ragClient");
 const {
   DEFAULT_MAX_ADMIN_ROUTES,
   DEFAULT_MAX_LEARNED_ITEMS,
@@ -38,7 +38,7 @@ function buildCompositeSearchQuery(message, recentMessages = []) {
   const currentContent = cleanMessageContent(message?.content);
   const recentUserTexts = (recentMessages || [])
     .slice(-3)
-    .map((m) => cleanMessageContent(m.content))
+    .map((messageItem) => cleanMessageContent(messageItem.content))
     .filter(Boolean);
 
   if (!recentUserTexts.length) return currentContent;
@@ -49,27 +49,27 @@ function parseRagResults(results = []) {
   const learnedQna = [];
   const learnedFreeform = [];
 
-  for (const r of results) {
-    const meta = r.metadata || {};
-    const itemType = (r.item_type || "").toLowerCase();
+  for (const result of results) {
+    const metadata = result.metadata || {};
+    const itemType = String(result.item_type || "").toLowerCase();
 
     if (itemType === KNOWLEDGE_TYPE_QNA) {
-      const q = meta.question || r.title || extractQuestionFromText(r.text);
-      const a = meta.answer || extractAnswerFromText(r.text);
+      const question = metadata.question || result.title || extractQuestionFromText(result.text);
+      const answer = metadata.answer || extractAnswerFromText(result.text);
       learnedQna.push({
-        id: r.item_id || r.id,
+        id: result.item_id || result.id,
         type: KNOWLEDGE_TYPE_QNA,
-        question: q,
-        answer: a,
-        score: r.score,
+        question,
+        answer,
+        score: result.score,
       });
     } else if (itemType === KNOWLEDGE_TYPE_FREEFORM) {
       learnedFreeform.push({
-        id: r.item_id || r.id,
+        id: result.item_id || result.id,
         type: KNOWLEDGE_TYPE_FREEFORM,
-        title: r.title || meta.title || "Knowledge Snippet",
-        content: r.text || meta.content || "",
-        score: r.score,
+        title: result.title || metadata.title || "Knowledge Snippet",
+        content: result.text || metadata.content || "",
+        score: result.score,
       });
     }
   }
@@ -90,9 +90,7 @@ async function parseRagAdminRoutes(results = [], guild) {
     }
 
     const metadata = result.metadata || {};
-    const roleId = String(
-      metadata.roleId || metadata.role_id || ""
-    ).trim();
+    const roleId = String(metadata.roleId || metadata.role_id || "").trim();
     if (!roleId || seenRoleIds.has(roleId)) continue;
 
     const role = guild.roles.cache.get(roleId);
@@ -118,14 +116,14 @@ async function getRecentChannelMessages(channel, currentMessageId) {
     });
 
     return Array.from(fetched.values())
-      .filter((msg) => msg.id !== currentMessageId)
-      .filter((msg) => !msg.author?.bot)
-      .filter((msg) => cleanMessageContent(msg.content).length > 0)
+      .filter((messageItem) => messageItem.id !== currentMessageId)
+      .filter((messageItem) => !messageItem.author?.bot)
+      .filter((messageItem) => cleanMessageContent(messageItem.content).length > 0)
       .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
       .slice(-aiConfig.recentMessagesLimit)
-      .map((msg) => ({
-        authorName: msg.member?.displayName || msg.author?.username || "User",
-        content: cleanMessageContent(msg.content).slice(0, 500),
+      .map((messageItem) => ({
+        authorName: messageItem.member?.displayName || messageItem.author?.username || "User",
+        content: cleanMessageContent(messageItem.content).slice(0, 500),
       }));
   } catch (error) {
     console.error("Failed to fetch recent ticket messages:", error);
@@ -145,12 +143,8 @@ async function getLearnedKnowledge(guildId, options = {}) {
 
   try {
     const config = await client.guildConfig.findUnique({
-      where: {
-        guildId,
-      },
-      select: {
-        maxLearnedItems: true,
-      },
+      where: { guildId },
+      select: { maxLearnedItems: true },
     });
 
     const configuredLimit = Number(
@@ -168,12 +162,8 @@ async function getLearnedKnowledge(guildId, options = {}) {
     );
 
     const items = await client.learnedAnswer.findMany({
-      where: {
-        guildId,
-      },
-      orderBy: {
-        updatedAt: "desc",
-      },
+      where: { guildId },
+      orderBy: { updatedAt: "desc" },
       take,
       select: {
         id: true,
@@ -191,7 +181,6 @@ async function getLearnedKnowledge(guildId, options = {}) {
     };
   } catch (error) {
     console.error("Failed to fetch learned knowledge:", error);
-
     return {
       learnedQna: [],
       learnedFreeform: [],
@@ -206,12 +195,8 @@ async function getAdminRoutes(guild, options = {}) {
 
   try {
     const config = await client.guildConfig.findUnique({
-      where: {
-        guildId: guild.id,
-      },
-      select: {
-        maxAdminRoutes: true,
-      },
+      where: { guildId: guild.id },
+      select: { maxAdminRoutes: true },
     });
 
     const configuredLimit = Number(
@@ -232,9 +217,7 @@ async function getAdminRoutes(guild, options = {}) {
         guildId: guild.id,
         enabled: true,
       },
-      orderBy: {
-        updatedAt: "desc",
-      },
+      orderBy: { updatedAt: "desc" },
       take,
       select: {
         id: true,
@@ -248,7 +231,6 @@ async function getAdminRoutes(guild, options = {}) {
     return routes
       .map((route) => {
         const role = guild.roles.cache.get(route.roleId);
-
         if (!role || role.id === guild.id) return null;
 
         return {
@@ -265,32 +247,12 @@ async function getAdminRoutes(guild, options = {}) {
   }
 }
 
-async function searchRagContext({
-  guildId,
-  query,
-  itemTypes,
-  search = searchKnowledge,
-}) {
-  if (!ragConfig.enabled || !guildId || !query) {
-    return { ok: false, results: [], totalCandidates: 0 };
-  }
-
-  return search({
-    guildId,
-    query,
-    topK: ragConfig.topK,
-    candidateK: ragConfig.candidateK,
-    minScore: ragConfig.minScore,
-    itemTypes,
-  });
-}
-
 async function buildTicketContext({
   message,
   includeLearnedKnowledge = true,
   includeAdminRoutes = true,
   client = prisma,
-  search = searchKnowledge,
+  searchContext = searchTicketContext,
 }) {
   const guildId = message.guild?.id;
   const recentMessages = await getRecentChannelMessages(
@@ -308,33 +270,38 @@ async function buildTicketContext({
   let routeRetrievalSource = "none";
   let ragCandidates = 0;
   let ragRouteCandidates = 0;
+  let ragTimingsMs = {};
+  let ragResult = null;
+
+  if (
+    ragConfig.enabled &&
+    guildId &&
+    query &&
+    (includeLearnedKnowledge || includeAdminRoutes)
+  ) {
+    try {
+      ragResult = await searchContext({
+        guildId,
+        query,
+        knowledgeCandidateK: ragConfig.candidateK,
+        routeCandidateK: ragConfig.routeCandidateK,
+        knowledgeTopK: includeLearnedKnowledge ? ragConfig.topK : 0,
+        routeTopK: includeAdminRoutes ? ragConfig.routeTopK : 0,
+        minScore: ragConfig.minScore,
+      });
+    } catch (ragError) {
+      console.warn(
+        "RAG ticket context retrieval failed, falling back to database:",
+        ragError?.message || ragError
+      );
+    }
+  }
 
   if (includeLearnedKnowledge && guildId) {
-    let ragKnowledge = null;
-    if (ragConfig.enabled && query) {
-      try {
-        ragKnowledge = await searchRagContext({
-          guildId,
-          query,
-          itemTypes: RAG_KNOWLEDGE_TYPES,
-          search,
-        });
-      } catch (ragError) {
-        console.warn(
-          "RAG knowledge retrieval failed, falling back to database:",
-          ragError?.message || ragError
-        );
-      }
-    }
-
-    if (
-      ragKnowledge?.ok &&
-      Array.isArray(ragKnowledge.results) &&
-      ragKnowledge.results.length > 0
-    ) {
-      learnedKnowledge = parseRagResults(ragKnowledge.results);
+    if (ragResult?.ok) {
+      learnedKnowledge = parseRagResults(ragResult.knowledgeResults || []);
       knowledgeRetrievalSource = "rag";
-      ragCandidates = ragKnowledge.totalCandidates || 0;
+      ragCandidates = ragResult.knowledgeCandidates || 0;
     } else {
       learnedKnowledge = await getLearnedKnowledge(guildId, { client });
       knowledgeRetrievalSource = "mysql";
@@ -342,39 +309,21 @@ async function buildTicketContext({
   }
 
   if (includeAdminRoutes && guildId) {
-    let ragRoutes = null;
-    if (ragConfig.enabled && query) {
-      try {
-        ragRoutes = await searchRagContext({
-          guildId,
-          query,
-          itemTypes: RAG_ROUTE_TYPES,
-          search,
-        });
-      } catch (ragError) {
-        console.warn(
-          "RAG route retrieval failed, falling back to database:",
-          ragError?.message || ragError
-        );
-      }
-    }
-
-    if (
-      ragRoutes?.ok &&
-      Array.isArray(ragRoutes.results) &&
-      ragRoutes.results.length > 0
-    ) {
-      adminRoutes = await parseRagAdminRoutes(ragRoutes.results, message.guild);
-      if (adminRoutes.length > 0) {
-        routeRetrievalSource = "rag";
-        ragRouteCandidates = ragRoutes.totalCandidates || 0;
-      }
-    }
-
-    if (routeRetrievalSource !== "rag") {
+    if (ragResult?.ok) {
+      adminRoutes = await parseRagAdminRoutes(
+        ragResult.routeResults || [],
+        message.guild
+      );
+      routeRetrievalSource = "rag";
+      ragRouteCandidates = ragResult.routeCandidates || 0;
+    } else {
       adminRoutes = await getAdminRoutes(message.guild, { client });
       routeRetrievalSource = "mysql";
     }
+  }
+
+  if (ragResult?.ok) {
+    ragTimingsMs = ragResult.timingsMs || {};
   }
 
   return {
@@ -389,6 +338,7 @@ async function buildTicketContext({
     routeRetrievalSource,
     ragCandidates,
     ragRouteCandidates,
+    ragTimingsMs,
   };
 }
 
@@ -405,5 +355,4 @@ module.exports = {
   getRecentChannelMessages,
   parseRagAdminRoutes,
   parseRagResults,
-  searchRagContext,
 };

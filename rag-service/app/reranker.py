@@ -54,6 +54,41 @@ class RerankerManager:
     def is_loaded(self) -> bool:
         return self._model is not None
 
+    def score_candidates(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not candidates:
+            return []
+
+        model = self.get_model()
+        clean_query = query.strip()
+        if clean_query.startswith("query:"):
+            clean_query = clean_query[6:].strip()
+
+        sentence_pairs = []
+        for candidate in candidates:
+            text = candidate.get("text", "")
+            title = candidate.get("title")
+            doc_text = f"{title}\n{text}" if title and not text.startswith(title) else text
+            sentence_pairs.append([clean_query, doc_text])
+
+        scores = model.predict(sentence_pairs, show_progress_bar=False)
+        if isinstance(scores, (int, float)):
+            scores = [scores]
+        elif isinstance(scores, np.ndarray):
+            scores = scores.tolist()
+
+        for idx, score_val in enumerate(scores):
+            if isinstance(score_val, list):
+                score_val = score_val[0]
+            norm_score = _sigmoid(float(score_val))
+            candidates[idx]["rerank_score"] = round(norm_score, 5)
+            candidates[idx]["score"] = round(norm_score, 5)
+
+        return sorted(candidates, key=lambda item: item["score"], reverse=True)
+
     def rerank(
         self,
         query: str,
@@ -64,40 +99,13 @@ class RerankerManager:
             return []
 
         if top_n <= 0:
-            for c in candidates:
-                c["rerank_score"] = None
-                c["score"] = c.get("vector_score", 0.0)
+            for candidate in candidates:
+                candidate["rerank_score"] = None
+                candidate["score"] = candidate.get("vector_score", 0.0)
             return candidates
 
-        model = self.get_model()
-        # Clean query for cross-encoder (do not include "query: " prefix in cross-encoder text)
-        clean_query = query.strip()
-        if clean_query.startswith("query:"):
-            clean_query = clean_query[6:].strip()
-
-        sentence_pairs = []
-        for c in candidates:
-            text = c.get("text", "")
-            title = c.get("title")
-            doc_text = f"{title}\n{text}" if title and not text.startswith(title) else text
-            sentence_pairs.append([clean_query, doc_text])
-
-        scores = model.predict(sentence_pairs, show_progress_bar=False)
-        
-        if isinstance(scores, (int, float)):
-            scores = [scores]
-        elif isinstance(scores, np.ndarray):
-            scores = scores.tolist()
-
-        for idx, score_val in enumerate(scores):
-            # Compute sigmoid if score is raw logit
-            norm_score = _sigmoid(float(score_val))
-            candidates[idx]["rerank_score"] = round(norm_score, 5)
-            candidates[idx]["score"] = round(norm_score, 5)
-
-        # Sort by rerank score descending
-        sorted_candidates = sorted(candidates, key=lambda x: x["score"], reverse=True)
-        return sorted_candidates[:top_n]
+        ranked = self.score_candidates(query=query, candidates=candidates)
+        return ranked[:top_n]
 
 
 reranker_manager = RerankerManager()

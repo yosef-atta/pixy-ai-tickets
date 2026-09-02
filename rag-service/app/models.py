@@ -64,7 +64,6 @@ class KnowledgeItemInput(BaseModel):
             desc = (self.description or self.content or self.text or "").strip()
             return f"Admin Route: {role_desc}\nDescription: {desc}"
 
-        # freeform or discord_reference
         body = (self.content or self.text or self.answer or "").strip()
         title = (self.title or self.question or "").strip()
         if title and body and not body.startswith(title):
@@ -79,6 +78,16 @@ class SearchRequest(BaseModel):
     rerank_top_n: int = Field(default=5, ge=0, le=50, description="Number of top reranked results to return. Set 0 to disable reranker.")
     min_score: float = Field(default=0.0, description="Minimum score threshold for returned results")
     item_types: Optional[List[str]] = Field(default=None, description="Optional filter by item_type (e.g. ['qna', 'admin_route'])")
+
+
+class TicketContextSearchRequest(BaseModel):
+    guild_id: str = Field(..., description="Discord Guild ID for multi-tenant payload filtering")
+    query: str = Field(..., min_length=1, description="Search query string")
+    knowledge_candidate_k: int = Field(default=20, ge=1, le=100)
+    route_candidate_k: int = Field(default=10, ge=1, le=100)
+    knowledge_top_n: int = Field(default=5, ge=0, le=50)
+    route_top_n: int = Field(default=3, ge=0, le=50)
+    min_score: float = Field(default=0.0)
 
 
 class SearchResultItem(BaseModel):
@@ -102,6 +111,16 @@ class SearchResponse(BaseModel):
     total_candidates: int
     query: str
     guild_id: str
+
+
+class TicketContextSearchResponse(BaseModel):
+    knowledge_results: List[SearchResultItem]
+    route_results: List[SearchResultItem]
+    knowledge_candidates: int
+    route_candidates: int
+    query: str
+    guild_id: str
+    timings_ms: Dict[str, float] = Field(default_factory=dict)
 
 
 class UpsertRequest(BaseModel):

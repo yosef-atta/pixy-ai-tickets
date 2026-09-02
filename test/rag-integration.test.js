@@ -7,6 +7,7 @@ const {
   deleteKnowledge,
   isRagAvailable,
   searchKnowledge,
+  searchTicketContext,
   syncAllKnowledge,
   upsertKnowledge,
 } = require("../src/ai/ragClient");
@@ -16,13 +17,17 @@ const {
   parseRagResults,
 } = require("../src/ai/buildTicketContext");
 
-test("ragConfig exposes correct defaults and getters", () => {
+test("ragConfig exposes correct defaults and bounded ticket-context getters", () => {
   assert.equal(typeof ragConfig.enabled, "boolean");
   assert.ok(ragConfig.serviceUrl.startsWith("http"));
   assert.equal(typeof ragConfig.candidateK, "number");
   assert.equal(typeof ragConfig.topK, "number");
+  assert.equal(typeof ragConfig.routeCandidateK, "number");
+  assert.equal(typeof ragConfig.routeTopK, "number");
   assert.equal(typeof ragConfig.timeoutMs, "number");
   assert.ok(ragConfig.candidateK >= ragConfig.topK);
+  assert.ok(ragConfig.routeCandidateK >= ragConfig.routeTopK);
+  assert.equal(typeof searchTicketContext, "function");
 });
 
 test("buildCompositeSearchQuery combines current and recent messages cleanly", () => {
@@ -63,13 +68,12 @@ test("parseRagResults correctly unpacks QnA and Freeform knowledge items", () =>
   assert.equal(parsed.learnedQna.length, 1);
   assert.equal(parsed.learnedQna[0].question, "How to pay?");
   assert.equal(parsed.learnedQna[0].answer, "We accept credit cards and PayPal.");
-
   assert.equal(parsed.learnedFreeform.length, 1);
   assert.equal(parsed.learnedFreeform[0].title, "Server Rules");
   assert.equal(parsed.learnedFreeform[0].content, "Be respectful to everyone.");
 });
 
-test("buildTicketContext falls back to database when RAG returns empty or fails", async () => {
+test("buildTicketContext falls back to database when the RAG service is unavailable", async () => {
   const fakePrisma = {
     guildConfig: {
       async findUnique() {
@@ -118,9 +122,19 @@ test("buildTicketContext falls back to database when RAG returns empty or fails"
     includeLearnedKnowledge: true,
     includeAdminRoutes: true,
     client: fakePrisma,
+    async searchContext() {
+      return { ok: false, error: "offline" };
+    },
   });
 
-  assert.ok(Array.isArray(context.learnedQna));
-  assert.ok(Array.isArray(context.learnedFreeform));
-  assert.ok(["rag", "mysql"].includes(context.retrievalSource));
+  assert.equal(context.retrievalSource, "mysql");
+  assert.equal(context.routeRetrievalSource, "mysql");
+  assert.equal(context.learnedQna[0].id, "db-qna-1");
 });
+
+void checkHealth;
+void deleteKnowledge;
+void isRagAvailable;
+void searchKnowledge;
+void syncAllKnowledge;
+void upsertKnowledge;

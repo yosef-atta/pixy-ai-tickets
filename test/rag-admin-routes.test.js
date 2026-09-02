@@ -126,7 +126,7 @@ test("RAG admin route results resolve back to live Discord roles", async () => {
   }]);
 });
 
-test("ticket context retrieves knowledge and admin routes through separate RAG filters", async () => {
+test("ticket context retrieves knowledge and admin routes through one bounded RAG request", async () => {
   const calls = [];
   const guild = createGuild();
   const message = {
@@ -146,29 +146,14 @@ test("ticket context retrieves knowledge and admin routes through separate RAG f
   const context = await buildTicketContext({
     message,
     client: {},
-    async search(args) {
-      calls.push(args.itemTypes);
-      if (args.itemTypes.includes("admin_route")) {
-        return {
-          ok: true,
-          totalCandidates: 4,
-          results: [{
-            id: "vector-route",
-            item_id: "route-1",
-            item_type: "admin_route",
-            text: "Admin Route: Billing Support\nDescription: Handles payment failures.",
-            score: 0.93,
-            metadata: {
-              roleId: ROLE_ID,
-              description: "Handles payment failures.",
-            },
-          }],
-        };
-      }
+    async searchContext(args) {
+      calls.push(args);
       return {
         ok: true,
-        totalCandidates: 7,
-        results: [{
+        knowledgeCandidates: 7,
+        routeCandidates: 4,
+        timingsMs: { total: 321.5 },
+        knowledgeResults: [{
           id: "vector-qna",
           item_id: "qna-1",
           item_type: "qna",
@@ -180,18 +165,78 @@ test("ticket context retrieves knowledge and admin routes through separate RAG f
             answer: "Do not retry multiple charges.",
           },
         }],
+        routeResults: [{
+          id: "vector-route",
+          item_id: "route-1",
+          item_type: "admin_route",
+          text: "Admin Route: Billing Support\nDescription: Handles payment failures.",
+          score: 0.93,
+          metadata: {
+            roleId: ROLE_ID,
+            description: "Handles payment failures.",
+          },
+        }],
       };
     },
   });
 
-  assert.deepEqual(calls, [
-    ["qna", "freeform"],
-    ["admin_route"],
-  ]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].guildId, GUILD_ID);
+  assert.ok(calls[0].knowledgeCandidateK >= calls[0].knowledgeTopK);
+  assert.ok(calls[0].routeCandidateK >= calls[0].routeTopK);
   assert.equal(context.knowledgeRetrievalSource, "rag");
   assert.equal(context.routeRetrievalSource, "rag");
   assert.equal(context.learnedQna.length, 1);
   assert.equal(context.adminRoutes[0].roleId, ROLE_ID);
+  assert.equal(context.ragCandidates, 7);
+  assert.equal(context.ragRouteCandidates, 4);
+  assert.equal(context.ragTimingsMs.total, 321.5);
+});
+
+test("successful RAG response with no matching route does not inject arbitrary MySQL routes", async () => {
+  let mysqlRouteReads = 0;
+  const guild = createGuild();
+  const message = {
+    id: "current-message",
+    content: "How do I apply for staff?",
+    guild,
+    channel: {
+      name: "ticket-staff",
+      messages: { async fetch() { return new Map(); } },
+    },
+  };
+  const client = {
+    guildConfig: {
+      async findUnique() {
+        return { maxLearnedItems: 1000, maxAdminRoutes: 1000 };
+      },
+    },
+    learnedAnswer: { async findMany() { return []; } },
+    adminRoute: {
+      async findMany() {
+        mysqlRouteReads += 1;
+        return [{ id: "billing", roleId: ROLE_ID, description: "Billing only" }];
+      },
+    },
+  };
+
+  const context = await buildTicketContext({
+    message,
+    client,
+    async searchContext() {
+      return {
+        ok: true,
+        knowledgeResults: [],
+        routeResults: [],
+        knowledgeCandidates: 0,
+        routeCandidates: 0,
+      };
+    },
+  });
+
+  assert.equal(context.routeRetrievalSource, "rag");
+  assert.deepEqual(context.adminRoutes, []);
+  assert.equal(mysqlRouteReads, 0);
 });
 
 test("full RAG sync includes both learned knowledge and enabled admin routes", async () => {

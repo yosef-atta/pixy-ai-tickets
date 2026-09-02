@@ -127,6 +127,92 @@ async function searchKnowledge({
   }
 }
 
+async function searchTicketContext({
+  guildId,
+  query,
+  knowledgeCandidateK = ragConfig.candidateK,
+  routeCandidateK = ragConfig.routeCandidateK,
+  knowledgeTopK = ragConfig.topK,
+  routeTopK = ragConfig.routeTopK,
+  minScore = ragConfig.minScore,
+  timeoutMs = ragConfig.timeoutMs,
+}) {
+  if (!ragConfig.enabled || !guildId || !query) {
+    return {
+      ok: false,
+      knowledgeResults: [],
+      routeResults: [],
+      knowledgeCandidates: 0,
+      routeCandidates: 0,
+    };
+  }
+
+  if (isTemporarilyOffline()) {
+    return {
+      ok: false,
+      error: "rag_service_offline",
+      knowledgeResults: [],
+      routeResults: [],
+    };
+  }
+
+  const url = `${ragConfig.serviceUrl}/api/search-context`;
+  const body = {
+    guild_id: String(guildId).trim(),
+    query: String(query).trim(),
+    knowledge_candidate_k: Number(knowledgeCandidateK),
+    route_candidate_k: Number(routeCandidateK),
+    knowledge_top_n: Number(knowledgeTopK),
+    route_top_n: Number(routeTopK),
+    min_score: Number(minScore),
+  };
+
+  try {
+    const signal = AbortSignal.timeout(timeoutMs);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      console.warn(`[RAG Client] Ticket context search returned status ${response.status}: ${errText}`);
+      return {
+        ok: false,
+        error: `HTTP ${response.status}: ${errText}`,
+        knowledgeResults: [],
+        routeResults: [],
+      };
+    }
+
+    const data = await response.json();
+    recordConnectionSuccess();
+    return {
+      ok: true,
+      knowledgeResults: Array.isArray(data.knowledge_results) ? data.knowledge_results : [],
+      routeResults: Array.isArray(data.route_results) ? data.route_results : [],
+      knowledgeCandidates: data.knowledge_candidates || 0,
+      routeCandidates: data.route_candidates || 0,
+      query: data.query || query,
+      guildId: data.guild_id || guildId,
+      timingsMs: data.timings_ms || {},
+    };
+  } catch (error) {
+    recordConnectionFailure(error);
+    return {
+      ok: false,
+      error: error?.message || String(error),
+      knowledgeResults: [],
+      routeResults: [],
+    };
+  }
+}
+
 async function upsertKnowledge({
   guildId,
   items,
@@ -323,6 +409,7 @@ module.exports = {
   deleteKnowledge,
   isRagAvailable,
   searchKnowledge,
+  searchTicketContext,
   syncAllKnowledge,
   upsertKnowledge,
 };

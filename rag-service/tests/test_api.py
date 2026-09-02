@@ -23,7 +23,6 @@ def test_health_endpoint(client):
 def test_upsert_search_and_delete_workflow(client):
     test_guild_id = "test_guild_999"
 
-    # 1. Upsert test items
     upsert_payload = {
         "guild_id": test_guild_id,
         "items": [
@@ -61,7 +60,6 @@ def test_upsert_search_and_delete_workflow(client):
     assert upsert_data["upserted_items"] == 4
     assert upsert_data["upserted_chunks"] >= 4
 
-    # 2. Search for refund information
     search_payload = {
         "guild_id": test_guild_id,
         "query": "Can I get my money back for my order?",
@@ -79,7 +77,6 @@ def test_upsert_search_and_delete_workflow(client):
     assert "score" in top_result
     assert top_result["rerank_score"] is not None
 
-    # 3. Search with item_types filter
     filter_search_payload = {
         "guild_id": test_guild_id,
         "query": "Who handles payment issues?",
@@ -91,10 +88,28 @@ def test_upsert_search_and_delete_workflow(client):
     assert filter_resp.status_code == 200
     filter_data = filter_resp.json()
     assert len(filter_data["results"]) > 0
-    assert all(r["item_type"] == "admin_route" for r in filter_data["results"])
+    assert all(result["item_type"] == "admin_route" for result in filter_data["results"])
     assert filter_data["results"][0]["item_id"] == "route-billing"
 
-    # 4. Delete specific items
+    context_payload = {
+        "guild_id": test_guild_id,
+        "query": "My payment failed and I need billing support",
+        "knowledge_candidate_k": 5,
+        "route_candidate_k": 5,
+        "knowledge_top_n": 3,
+        "route_top_n": 2,
+        "min_score": 0.0,
+    }
+    context_resp = client.post("/api/search-context", json=context_payload)
+    assert context_resp.status_code == 200
+    context_data = context_resp.json()
+    assert context_data["knowledge_candidates"] > 0
+    assert context_data["route_candidates"] > 0
+    assert any(result["item_id"] == "route-billing" for result in context_data["route_results"])
+    assert all(result["item_type"] in ("qna", "freeform") for result in context_data["knowledge_results"])
+    assert all(result["item_type"] == "admin_route" for result in context_data["route_results"])
+    assert context_data["timings_ms"]["total"] >= 0
+
     delete_payload = {
         "guild_id": test_guild_id,
         "item_ids": ["qna-refund", "doc-rules"],
@@ -105,11 +120,10 @@ def test_upsert_search_and_delete_workflow(client):
     assert del_data["success"] is True
     assert "qna-refund" in del_data["deleted_item_ids"]
 
-    # 5. Verify deleted items no longer return in search
     search_after_del = client.post("/api/search", json=search_payload)
     assert search_after_del.status_code == 200
     after_results = search_after_del.json()["results"]
-    returned_ids = [r["item_id"] for r in after_results]
+    returned_ids = [result["item_id"] for result in after_results]
     assert "qna-refund" not in returned_ids
 
 
@@ -135,5 +149,4 @@ def test_sync_all_endpoint(client):
     assert sync_data["synced_items"] == 1
     assert sync_data["synced_chunks"] == 1
 
-    # Cleanup after test
     client.post("/api/delete", json={"guild_id": sync_guild_id, "item_ids": ["sync-item-1"]})
