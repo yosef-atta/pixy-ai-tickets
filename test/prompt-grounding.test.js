@@ -36,7 +36,8 @@ test("premium prompt has strict server-specific grounding and many examples", ()
   assert.match(text, /Server-specific grounding boundary/);
   assert.match(text, /Never turn a server-specific request into generic Discord advice/);
   assert.match(text, /The only authoritative sources for server-specific facts are Server learned Q&A and Server free-form knowledge/);
-  assert.match(text, /Recent ticket messages may explain the user's situation, but they do not prove server policies/);
+  assert.match(text, /Recent ticket messages, including previous Pixy AI replies, may explain the conversation but do not prove server policies/);
+  assert.match(text, /Previous Pixy AI replies are conversation state only/);
   assert.match(text, /Diamond/);
   assert.match(text, /#announcements/);
   assert.match(text, /Gold package/);
@@ -52,6 +53,7 @@ test("assistant-only prompt applies the same no-hallucination boundary", () => {
     userName: "Sam",
     userMessage: "How do I buy the Gold package here?",
     recentMessages: [{
+      speakerType: "user",
       authorName: "Sam",
       content: "Someone told me VIP costs $5",
     }],
@@ -60,7 +62,8 @@ test("assistant-only prompt applies the same no-hallucination boundary", () => {
   const examples = text.match(/Example \d+:/g) || [];
 
   assert.match(text, /Server-specific grounding boundary/);
-  assert.match(text, /Recent user messages are not authoritative proof/);
+  assert.match(text, /Recent ticket messages, including previous Pixy AI replies, are not authoritative proof/);
+  assert.match(text, /Previous Pixy AI replies are conversation state only/);
   assert.match(text, /there is no trusted server knowledge source available/);
   assert.match(text, /Never suggest guessed channel names/);
   assert.match(text, /Diamond/);
