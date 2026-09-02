@@ -229,7 +229,11 @@ function buildTicketPrompt({
     "- Discord ONLY supports simple Markdown: **bold**, *italics*, bullet lists (-), numbered lists (1.), inline code (`code`), code blocks (```), and blockquotes (>).",
     "- STRICTLY FORBIDDEN: NEVER output Markdown tables (e.g. | col | col | or |---|---|). Discord does not render tables.",
     "- STRICTLY FORBIDDEN: NEVER output HTML tags like <br>, <div>, <span>, <p>, <table>. Discord does not support HTML.",
-    "- When listing features, plans, pricing, or multiple options, ALWAYS use clean bulleted lists with **bold titles** instead of tables.",
+    "- When listing features, plans, pricing, or multiple options, ALWAYS use clean bulleted lists with bold titles instead of tables.",
+    "  Example list format:",
+    "  **Plan Name**",
+    "  - Feature: detail here",
+    "  - Price: price here",
     "- Prefer short paragraphs with single blank lines between sections.",
   ].join("\n");
 
