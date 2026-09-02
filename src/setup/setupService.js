@@ -8,6 +8,10 @@ const {
 } = require("../billing/ticketControlRefresh");
 const { prisma } = require("../config/prisma");
 const {
+  deleteKnowledge,
+  upsertKnowledge,
+} = require("../ai/ragClient");
+const {
   ensureGuildConfig,
 } = require("../config/guildConfigFoundation");
 const {
@@ -68,6 +72,30 @@ function normalizeSourceRefs(values) {
   }
 
   return result;
+}
+
+function resolveRagOperation(options, optionName, defaultOperation) {
+  if (typeof options?.[optionName] === "function") {
+    return options[optionName];
+  }
+  // Unit/service tests commonly inject a fake Prisma client. Avoid accidental
+  // network calls unless the test explicitly injects a RAG operation too.
+  if (options?.client) return null;
+  return defaultOperation;
+}
+
+function adminRouteToRagItem(route) {
+  return {
+    id: route.id,
+    type: "admin_route",
+    roleId: route.roleId,
+    description: route.description,
+    metadata: {
+      roleId: route.roleId,
+      description: route.description,
+    },
+    updatedAt: route.updatedAt,
+  };
 }
 
 async function withTransaction(client, callback) {
@@ -401,9 +429,13 @@ async function configureEscalationCategory(guild, categoryId, options = {}) {
 }
 
 function getMaxAdminRoutes(config) {
+  const configured = Number(
+    config?.maxAdminRoutes ?? DEFAULT_MAX_ADMIN_ROUTES
+  );
+  if (!Number.isFinite(configured)) return DEFAULT_MAX_ADMIN_ROUTES;
   return Math.max(
     1,
-    Math.min(Number(config?.maxAdminRoutes || DEFAULT_MAX_ADMIN_ROUTES), 25)
+    Math.min(Math.floor(configured), DEFAULT_MAX_ADMIN_ROUTES)
   );
 }
 
@@ -447,6 +479,15 @@ async function upsertSupportRoute(guildId, roleId, description, options = {}) {
   });
 
   await setEscalationEnabled(guildId, true, { client });
+
+  const ragUpsert = resolveRagOperation(options, "ragUpsert", upsertKnowledge);
+  if (ragUpsert) {
+    await ragUpsert({
+      guildId,
+      items: [adminRouteToRagItem(route)],
+    }).catch(() => null);
+  }
+
   return {
     route,
     existing: Boolean(existing),
@@ -466,6 +507,12 @@ async function removeSupportRoutes(guildId, routeIds, options = {}) {
       id: { in: ids },
     },
   });
+
+  const ragDelete = resolveRagOperation(options, "ragDelete", deleteKnowledge);
+  if (ragDelete) {
+    await ragDelete({ guildId, itemIds: ids }).catch(() => null);
+  }
+
   const remaining = await client.adminRoute.count({
     where: { guildId, enabled: true },
   });
@@ -562,6 +609,7 @@ module.exports = {
   addThreadParents,
   addTicketCategories,
   addTicketSources,
+  adminRouteToRagItem,
   completeOnboarding,
   configureEscalationCategory,
   createOrFindEscalationCategory,
@@ -578,6 +626,7 @@ module.exports = {
   removeThreadParents,
   removeTicketCategories,
   removeTicketSources,
+  resolveRagOperation,
   setEscalationEnabled,
   setThreadParents,
   setTicketCategories,

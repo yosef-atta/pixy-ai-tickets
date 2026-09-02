@@ -9,6 +9,14 @@ const {
 
 const KNOWLEDGE_TYPE_QNA = "qna";
 const KNOWLEDGE_TYPE_FREEFORM = "freeform";
+const KNOWLEDGE_TYPE_ADMIN_ROUTE = "admin_route";
+const RAG_KNOWLEDGE_TYPES = Object.freeze([
+  KNOWLEDGE_TYPE_QNA,
+  KNOWLEDGE_TYPE_FREEFORM,
+]);
+const RAG_ROUTE_TYPES = Object.freeze([KNOWLEDGE_TYPE_ADMIN_ROUTE]);
+const FALLBACK_MAX_LEARNED_ITEMS = 25;
+const FALLBACK_MAX_ADMIN_ROUTES = 25;
 
 function cleanMessageContent(content) {
   return String(content || "")
@@ -55,10 +63,10 @@ function parseRagResults(results = []) {
         answer: a,
         score: r.score,
       });
-    } else {
+    } else if (itemType === KNOWLEDGE_TYPE_FREEFORM) {
       learnedFreeform.push({
         id: r.item_id || r.id,
-        type: itemType || KNOWLEDGE_TYPE_FREEFORM,
+        type: KNOWLEDGE_TYPE_FREEFORM,
         title: r.title || meta.title || "Knowledge Snippet",
         content: r.text || meta.content || "",
         score: r.score,
@@ -67,6 +75,40 @@ function parseRagResults(results = []) {
   }
 
   return { learnedQna, learnedFreeform };
+}
+
+async function parseRagAdminRoutes(results = [], guild) {
+  if (!guild?.id || !Array.isArray(results) || results.length === 0) return [];
+
+  await guild.roles.fetch().catch(() => null);
+  const routes = [];
+  const seenRoleIds = new Set();
+
+  for (const result of results) {
+    if (String(result?.item_type || "").toLowerCase() !== KNOWLEDGE_TYPE_ADMIN_ROUTE) {
+      continue;
+    }
+
+    const metadata = result.metadata || {};
+    const roleId = String(
+      metadata.roleId || metadata.role_id || ""
+    ).trim();
+    if (!roleId || seenRoleIds.has(roleId)) continue;
+
+    const role = guild.roles.cache.get(roleId);
+    if (!role || role.id === guild.id) continue;
+
+    seenRoleIds.add(roleId);
+    routes.push({
+      id: result.item_id || result.id,
+      roleId,
+      roleName: role.name,
+      description: metadata.description || result.text || "",
+      score: result.score,
+    });
+  }
+
+  return routes;
 }
 
 async function getRecentChannelMessages(channel, currentMessageId) {
@@ -120,7 +162,10 @@ async function getLearnedKnowledge(guildId, options = {}) {
         learnedFreeform: [],
       };
     }
-    const take = Math.min(Math.floor(configuredLimit), 100);
+    const take = Math.min(
+      Math.floor(configuredLimit),
+      FALLBACK_MAX_LEARNED_ITEMS
+    );
 
     const items = await client.learnedAnswer.findMany({
       where: {
@@ -174,7 +219,12 @@ async function getAdminRoutes(guild, options = {}) {
     );
     const take = Math.max(
       1,
-      Math.min(Number.isFinite(configuredLimit) ? Math.floor(configuredLimit) : DEFAULT_MAX_ADMIN_ROUTES, 25)
+      Math.min(
+        Number.isFinite(configuredLimit)
+          ? Math.floor(configuredLimit)
+          : DEFAULT_MAX_ADMIN_ROUTES,
+        FALLBACK_MAX_ADMIN_ROUTES
+      )
     );
 
     const routes = await client.adminRoute.findMany({
@@ -215,66 +265,117 @@ async function getAdminRoutes(guild, options = {}) {
   }
 }
 
+async function searchRagContext({
+  guildId,
+  query,
+  itemTypes,
+  search = searchKnowledge,
+}) {
+  if (!ragConfig.enabled || !guildId || !query) {
+    return { ok: false, results: [], totalCandidates: 0 };
+  }
+
+  return search({
+    guildId,
+    query,
+    topK: ragConfig.topK,
+    candidateK: ragConfig.candidateK,
+    minScore: ragConfig.minScore,
+    itemTypes,
+  });
+}
+
 async function buildTicketContext({
   message,
   includeLearnedKnowledge = true,
   includeAdminRoutes = true,
   client = prisma,
+  search = searchKnowledge,
 }) {
   const guildId = message.guild?.id;
-  const [recentMessages, adminRoutes] = await Promise.all([
-    getRecentChannelMessages(message.channel, message.id),
-    includeAdminRoutes
-      ? getAdminRoutes(message.guild, { client })
-      : Promise.resolve([]),
-  ]);
+  const recentMessages = await getRecentChannelMessages(
+    message.channel,
+    message.id
+  );
+  const query = buildCompositeSearchQuery(message, recentMessages);
 
-  if (!includeLearnedKnowledge || !guildId) {
-    return {
-      guildName: message.guild?.name || null,
-      channelName: message.channel?.name || null,
-      recentMessages,
-      learnedQna: [],
-      learnedFreeform: [],
-      adminRoutes,
-      retrievalSource: "none",
-    };
-  }
+  let learnedKnowledge = {
+    learnedQna: [],
+    learnedFreeform: [],
+  };
+  let adminRoutes = [];
+  let knowledgeRetrievalSource = "none";
+  let routeRetrievalSource = "none";
+  let ragCandidates = 0;
+  let ragRouteCandidates = 0;
 
-  // 1. Semantic RAG retrieval
-  if (ragConfig.enabled) {
-    try {
-      const query = buildCompositeSearchQuery(message, recentMessages);
-      if (query) {
-        const ragResult = await searchKnowledge({
+  if (includeLearnedKnowledge && guildId) {
+    let ragKnowledge = null;
+    if (ragConfig.enabled && query) {
+      try {
+        ragKnowledge = await searchRagContext({
           guildId,
           query,
-          topK: ragConfig.topK,
-          candidateK: ragConfig.candidateK,
-          minScore: ragConfig.minScore,
+          itemTypes: RAG_KNOWLEDGE_TYPES,
+          search,
         });
-
-        if (ragResult.ok && Array.isArray(ragResult.results) && ragResult.results.length > 0) {
-          const { learnedQna, learnedFreeform } = parseRagResults(ragResult.results);
-          return {
-            guildName: message.guild?.name || null,
-            channelName: message.channel?.name || null,
-            recentMessages,
-            learnedQna,
-            learnedFreeform,
-            adminRoutes,
-            retrievalSource: "rag",
-            ragCandidates: ragResult.totalCandidates,
-          };
-        }
+      } catch (ragError) {
+        console.warn(
+          "RAG knowledge retrieval failed, falling back to database:",
+          ragError?.message || ragError
+        );
       }
-    } catch (ragError) {
-      console.warn("RAG retrieval attempt failed, falling back to database:", ragError?.message || ragError);
+    }
+
+    if (
+      ragKnowledge?.ok &&
+      Array.isArray(ragKnowledge.results) &&
+      ragKnowledge.results.length > 0
+    ) {
+      learnedKnowledge = parseRagResults(ragKnowledge.results);
+      knowledgeRetrievalSource = "rag";
+      ragCandidates = ragKnowledge.totalCandidates || 0;
+    } else {
+      learnedKnowledge = await getLearnedKnowledge(guildId, { client });
+      knowledgeRetrievalSource = "mysql";
     }
   }
 
-  // 2. Fallback to MySQL database
-  const learnedKnowledge = await getLearnedKnowledge(guildId, { client });
+  if (includeAdminRoutes && guildId) {
+    let ragRoutes = null;
+    if (ragConfig.enabled && query) {
+      try {
+        ragRoutes = await searchRagContext({
+          guildId,
+          query,
+          itemTypes: RAG_ROUTE_TYPES,
+          search,
+        });
+      } catch (ragError) {
+        console.warn(
+          "RAG route retrieval failed, falling back to database:",
+          ragError?.message || ragError
+        );
+      }
+    }
+
+    if (
+      ragRoutes?.ok &&
+      Array.isArray(ragRoutes.results) &&
+      ragRoutes.results.length > 0
+    ) {
+      adminRoutes = await parseRagAdminRoutes(ragRoutes.results, message.guild);
+      if (adminRoutes.length > 0) {
+        routeRetrievalSource = "rag";
+        ragRouteCandidates = ragRoutes.totalCandidates || 0;
+      }
+    }
+
+    if (routeRetrievalSource !== "rag") {
+      adminRoutes = await getAdminRoutes(message.guild, { client });
+      routeRetrievalSource = "mysql";
+    }
+  }
 
   return {
     guildName: message.guild?.name || null,
@@ -283,16 +384,26 @@ async function buildTicketContext({
     learnedQna: learnedKnowledge.learnedQna,
     learnedFreeform: learnedKnowledge.learnedFreeform,
     adminRoutes,
-    retrievalSource: "mysql",
+    retrievalSource: knowledgeRetrievalSource,
+    knowledgeRetrievalSource,
+    routeRetrievalSource,
+    ragCandidates,
+    ragRouteCandidates,
   };
 }
 
 module.exports = {
+  FALLBACK_MAX_ADMIN_ROUTES,
+  FALLBACK_MAX_LEARNED_ITEMS,
+  RAG_KNOWLEDGE_TYPES,
+  RAG_ROUTE_TYPES,
   buildCompositeSearchQuery,
   buildTicketContext,
   cleanMessageContent,
   getAdminRoutes,
   getLearnedKnowledge,
   getRecentChannelMessages,
+  parseRagAdminRoutes,
   parseRagResults,
+  searchRagContext,
 };

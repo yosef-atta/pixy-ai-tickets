@@ -29,8 +29,8 @@ const GUILD_ID = "123456789012345678";
 
 test("phase 1 defaults use safe overlay behavior and one shared set of limits", () => {
   assert.equal(CURRENT_SETUP_VERSION, 2);
-  assert.equal(DEFAULT_MAX_LEARNED_ITEMS, 50);
-  assert.equal(DEFAULT_MAX_ADMIN_ROUTES, 10);
+  assert.equal(DEFAULT_MAX_LEARNED_ITEMS, 1000);
+  assert.equal(DEFAULT_MAX_ADMIN_ROUTES, 1000);
   assert.equal(DEFAULT_GUILD_SETTINGS.aiReplyEnabled, true);
   assert.equal(DEFAULT_GUILD_SETTINGS.closeTicketEnabled, false);
   assert.equal(DEFAULT_GUILD_SETTINGS.renameReviewEnabled, false);
@@ -40,8 +40,8 @@ test("phase 1 defaults use safe overlay behavior and one shared set of limits", 
   assert.deepEqual(buildGuildConfigCreateData(GUILD_ID), {
     guildId: GUILD_ID,
     enabled: true,
-    maxLearnedItems: 50,
-    maxAdminRoutes: 10,
+    maxLearnedItems: 1000,
+    maxAdminRoutes: 1000,
   });
 });
 
