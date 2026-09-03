@@ -8,8 +8,7 @@ const {
   buildAssistantTicketPrompt,
 } = require("../src/ai/buildAssistantTicketPrompt");
 const {
-  buildShortReplyContinuationHint,
-  classifyShortReply,
+  buildSemanticContinuationPolicy,
 } = require("../src/ai/conversationPromptMessages");
 
 function recentPixyOffer() {
@@ -34,48 +33,69 @@ function systemTexts(messages) {
     .join("\n\n");
 }
 
-test("Arabic and English short affirmatives are classified as affirmative", () => {
-  for (const value of ["تمام", "تمام؟", "ايوه", "أيوه", "نعم", "yes", "OK", "okay", "sure"]) {
-    assert.equal(classifyShortReply(value), "affirmative", value);
-  }
+test("continuation policy is semantic rather than exact-word based", () => {
+  const policy = buildSemanticContinuationPolicy(recentPixyOffer());
+
+  assert.match(policy, /semantic meaning/);
+  assert.match(policy, /not by exact keyword matching/);
+  assert.match(policy, /accepting, confirming, approving, or consenting/);
+  assert.match(policy, /rejecting, declining, cancelling, or withholding consent/);
+  assert.match(policy, /ambiguous, mixed, or starts a new topic/);
+  assert.match(policy, /Do not require a fixed vocabulary/);
+  assert.match(policy, /across languages, dialects, slang, spelling variation/);
 });
 
-test("Arabic and English short negatives are classified as negative", () => {
-  for (const value of ["لا", "لأ", "مش دلوقتي", "no", "nope", "not now"]) {
-    assert.equal(classifyShortReply(value), "negative", value);
-  }
-});
-
-test("affirmative reply after Pixy offer creates a do-not-repeat continuation signal", () => {
-  const hint = buildShortReplyContinuationHint(recentPixyOffer(), "تمام");
-
-  assert.match(hint, /short affirmative response/);
-  assert.match(hint, /continue with the offered next step immediately/);
-  assert.match(hint, /Do not repeat the same question or offer/);
-  assert.match(hint, /never bypasses grounding, safety, entitlement, or application action validation rules/);
-});
-
-test("negative reply after Pixy offer creates a rejection continuation signal", () => {
-  const hint = buildShortReplyContinuationHint(recentPixyOffer(), "لا");
-
-  assert.match(hint, /short negative response/);
-  assert.match(hint, /treat the reply as a rejection/);
-});
-
-test("short reply is not linked to an older Pixy turn when the immediately previous turn is another user", () => {
-  const hint = buildShortReplyContinuationHint([
+test("semantic continuation policy only attaches when the immediately previous turn is Pixy", () => {
+  const policy = buildSemanticContinuationPolicy([
     ...recentPixyOffer(),
     {
       speakerType: "user",
       authorName: "Other Member",
       content: "أنا عندي سؤال كمان",
     },
-  ], "تمام");
+  ]);
 
-  assert.equal(hint, null);
+  assert.equal(policy, null);
 });
 
-test("premium prompt keeps the affirmative signal in primary system policy and native dialogue roles before current reply", () => {
+test("premium prompt uses the same semantic policy regardless of exact acknowledgement wording", () => {
+  const commonOptions = {
+    guildName: "Example Guild",
+    channelName: "ticket-help",
+    userName: "Yosef",
+    recentMessages: recentPixyOffer(),
+    learnedQna: [],
+    learnedFreeform: [],
+    adminRoutes: [],
+  };
+
+  const first = buildTicketPrompt({
+    ...commonOptions,
+    userMessage: "تمام",
+  });
+  const second = buildTicketPrompt({
+    ...commonOptions,
+    userMessage: "works for me",
+  });
+
+  assert.equal(first[0].content, second[0].content);
+  assert.match(first[0].content, /semantic meaning/);
+  assert.match(first[0].content, /continue the offered next step immediately/);
+  assert.match(first[0].content, /Do not repeat the same question or offer/);
+  assert.equal(first.filter((message) => message.role === "system").length, 1);
+
+  const currentIndex = first.length - 1;
+  const historicalAssistantIndex = first.findIndex(
+    (message) => message.role === "assistant" && /هل تحب أن أساعدك/.test(message.content)
+  );
+  assert.ok(historicalAssistantIndex > 1);
+  assert.ok(historicalAssistantIndex < currentIndex);
+  assert.equal(first[currentIndex].role, "user");
+  assert.match(first[currentIndex].content, /تمام/);
+  assert.doesNotMatch(first[1].content, /Recent ticket messages:/);
+});
+
+test("semantic continuation policy preserves action-specific safety rules", () => {
   const messages = buildTicketPrompt({
     guildName: "Example Guild",
     channelName: "ticket-help",
@@ -87,23 +107,13 @@ test("premium prompt keeps the affirmative signal in primary system policy and n
     adminRoutes: [],
   });
 
-  const currentIndex = messages.length - 1;
-  const historicalAssistantIndex = messages.findIndex(
-    (message) => message.role === "assistant" && /هل تحب أن أساعدك/.test(message.content)
-  );
-
-  assert.equal(messages[0].role, "system");
-  assert.match(messages[0].content, /short affirmative response/);
-  assert.match(messages[0].content, /Do not repeat the same question or offer/);
-  assert.equal(messages.filter((message) => message.role === "system").length, 1);
-  assert.ok(historicalAssistantIndex > 1);
-  assert.ok(historicalAssistantIndex < currentIndex);
-  assert.equal(messages[currentIndex].role, "user");
-  assert.match(messages[currentIndex].content, /تمام/);
-  assert.doesNotMatch(messages[1].content, /Recent ticket messages:/);
+  const system = systemTexts(messages);
+  assert.match(system, /Action-specific rules are stronger than this continuation policy/);
+  assert.match(system, /never infer a destructive action such as close_ticket/);
+  assert.match(system, /all grounding, safety, entitlement, and application action validation rules remain in force/);
 });
 
-test("assistant-only prompt gets the same affirmative conversation signal without premium actions", () => {
+test("assistant-only prompt gets semantic continuity without premium actions", () => {
   const messages = buildAssistantTicketPrompt({
     guildName: "Example Guild",
     channelName: "ticket-help",
@@ -114,7 +124,7 @@ test("assistant-only prompt gets the same affirmative conversation signal withou
   const text = messages.map((message) => message.content).join("\n\n");
 
   assert.equal(messages.filter((message) => message.role === "system").length, 1);
-  assert.match(systemTexts(messages), /short affirmative response/);
+  assert.match(systemTexts(messages), /semantic meaning/);
   assert.doesNotMatch(text, /close_ticket/);
   assert.doesNotMatch(text, /rename_ticket/);
   assert.doesNotMatch(text, /escalate_ticket/);
