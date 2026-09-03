@@ -125,6 +125,14 @@ def test_upsert_search_and_delete_workflow(client):
     after_results = search_after_del.json()["results"]
     returned_ids = [result["item_id"] for result in after_results]
     assert "qna-refund" not in returned_ids
+    assert "doc-rules" not in returned_ids
+
+    route_after_del = client.post("/api/search", json=filter_search_payload)
+    assert route_after_del.status_code == 200
+    route_results = route_after_del.json()["results"]
+    assert len(route_results) > 0
+    assert all(result["item_type"] == "admin_route" for result in route_results)
+    assert route_results[0]["item_id"] == "route-billing"
 
 
 def test_sync_all_endpoint(client):
