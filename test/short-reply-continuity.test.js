@@ -38,22 +38,20 @@ test("continuation policy is semantic rather than exact-word based", () => {
 
   assert.match(policy, /semantic meaning/);
   assert.match(policy, /not by exact keyword matching/);
-  assert.match(policy, /active pending turn/);
-  assert.match(policy, /final question, offer, choice, confirmation request, handoff proposal/);
   assert.match(policy, /accepting, confirming, approving, authorizing, or consenting/);
   assert.match(policy, /rejecting, declining, cancelling, or withholding consent/);
-  assert.match(policy, /genuinely ambiguous, mixed, or starts a new topic/);
+  assert.match(policy, /full local dialogue and the user's wording/);
   assert.match(policy, /Do not require or maintain a fixed vocabulary/);
   assert.match(policy, /across languages, dialects, slang, spelling variation, punctuation, emojis/);
 });
 
-test("brief continuation is anchored to Pixy's final unresolved move rather than earlier explanation", () => {
+test("semantic continuation does not mechanically force every brief reply into the final question", () => {
   const policy = buildSemanticContinuationPolicy(recentPixyOffer());
 
-  assert.match(policy, /Resolve a brief or elliptical user reply against the active pending turn before interpreting it as a request to continue an earlier informational part/);
-  assert.match(policy, /prefer the final pending turn when the reply naturally answers it/);
-  assert.match(policy, /Continue earlier informational content only when the user explicitly refers to that content/);
-  assert.match(policy, /Do not restate or ask the same pending question again/);
+  assert.match(policy, /do not mechanically force every brief reply to answer it/);
+  assert.match(policy, /naturally asks to continue, expand, explain, or revisit informational content/);
+  assert.match(policy, /choose the one best supported by the full local dialogue and the user's wording/);
+  assert.match(policy, /clarification only when the ambiguity would materially change the next action/);
 });
 
 test("semantic continuation policy only attaches when the immediately previous turn is Pixy", () => {
@@ -69,7 +67,7 @@ test("semantic continuation policy only attaches when the immediately previous t
   assert.equal(policy, null);
 });
 
-test("premium prompt uses the same semantic policy regardless of exact acknowledgement wording", () => {
+test("premium prompt uses one semantic policy regardless of exact acknowledgement wording", () => {
   const commonOptions = {
     guildName: "Example Guild",
     channelName: "ticket-help",
@@ -95,9 +93,9 @@ test("premium prompt uses the same semantic policy regardless of exact acknowled
 
   assert.equal(first[0].content, second[0].content);
   assert.equal(second[0].content, third[0].content);
-  assert.match(first[0].content, /active pending turn/);
-  assert.match(first[0].content, /continue the promised or offered next step immediately/);
-  assert.match(first[0].content, /Do not restate or ask the same pending question again/);
+  assert.match(first[0].content, /semantic meaning/);
+  assert.match(first[0].content, /without repeating the same question/);
+  assert.match(first[0].content, /continue that content instead of forcing it into a yes\/no interpretation/);
   assert.equal(first.filter((message) => message.role === "system").length, 1);
 
   const currentIndex = second.length - 1;
@@ -140,7 +138,7 @@ test("assistant-only prompt gets semantic continuity without premium actions", (
   const text = messages.map((message) => message.content).join("\n\n");
 
   assert.equal(messages.filter((message) => message.role === "system").length, 1);
-  assert.match(systemTexts(messages), /active pending turn/);
+  assert.match(systemTexts(messages), /semantic meaning/);
   assert.doesNotMatch(text, /close_ticket/);
   assert.doesNotMatch(text, /rename_ticket/);
   assert.doesNotMatch(text, /escalate_ticket/);
