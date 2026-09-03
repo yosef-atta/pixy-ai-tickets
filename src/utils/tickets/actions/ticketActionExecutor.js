@@ -66,9 +66,21 @@ async function refreshEscalatedTicketControls(channel, settings) {
 
 async function executeRenameTicket({ message, validation }) {
   await message.channel.setName(validation.data.name, `Pixy AI safe action: rename_ticket requested by ${message.author?.tag || "user"}`);
-  await prisma.ticketChannel.update({
-    where: { channelId: message.channel.id },
-    data: { renamedByAiAt: new Date(), lastAiAction: TICKET_ACTIONS.RENAME_TICKET, lastAiActionAt: new Date() },
+  const guildId = message.guild?.id;
+  const channelId = message.channel.id;
+  const authorId = message.author?.id || null;
+
+  await prisma.ticketChannel.upsert({
+    where: { channelId },
+    update: { renamedByAiAt: new Date(), lastAiAction: TICKET_ACTIONS.RENAME_TICKET, lastAiActionAt: new Date() },
+    create: {
+      guildId,
+      channelId,
+      userId: authorId,
+      renamedByAiAt: new Date(),
+      lastAiAction: TICKET_ACTIONS.RENAME_TICKET,
+      lastAiActionAt: new Date(),
+    },
   });
   return { ok: true, replySent: false, channelDeleted: false };
 }
@@ -109,15 +121,54 @@ async function applyFullControlEscalation({ message, role, categoryId, name, aud
       { reason: auditReason }
     );
 
-    if (message.channel.parentId !== categoryId) {
-      await message.channel.setParent(categoryId, {
-        lockPermissions: false,
-        reason: auditReason,
-      });
-    }
+    const needsParentChange = message.channel.parentId !== categoryId;
+    const needsNameChange = Boolean(name && name !== message.channel.name);
 
-    if (name && name !== message.channel.name) {
-      await message.channel.setName(name, auditReason);
+    if (typeof message.channel.edit === "function") {
+      const editPayload = {};
+      if (needsParentChange) {
+        editPayload.parent = categoryId;
+        editPayload.lockPermissions = false;
+      }
+      if (needsNameChange) {
+        editPayload.name = name;
+      }
+
+      if (Object.keys(editPayload).length > 0) {
+        try {
+          await message.channel.edit(editPayload, auditReason);
+        } catch (editError) {
+          // If editing both name and parent fails (e.g. Discord channel rename 10-minute rate limit),
+          // fallback to changing parent category only so the escalation succeeds.
+          if (editPayload.parent && editPayload.name) {
+            if (typeof message.channel.setParent === "function") {
+              await message.channel.setParent(categoryId, {
+                lockPermissions: false,
+                reason: auditReason,
+              });
+            } else {
+              await message.channel.edit({ parent: categoryId, lockPermissions: false }, auditReason);
+            }
+          } else {
+            throw editError;
+          }
+        }
+      }
+    } else {
+      if (needsParentChange) {
+        await message.channel.setParent(categoryId, {
+          lockPermissions: false,
+          reason: auditReason,
+        });
+      }
+
+      if (needsNameChange) {
+        try {
+          await message.channel.setName(name, auditReason);
+        } catch (nameError) {
+          console.warn("Channel rename during escalation was skipped due to Discord rate limits:", nameError?.message || nameError);
+        }
+      }
     }
 
     return state;
@@ -167,14 +218,34 @@ async function persistEscalationState({
   reason,
   notificationMessage,
 }) {
-  return prisma.ticketChannel.update({
-    where: { channelId: message.channel.id },
-    data: {
+  const guildId = message.guild?.id;
+  const channelId = message.channel.id;
+  const authorId = message.author?.id || null;
+  const cleanReason = reason ? String(reason).slice(0, 500) : null;
+  const notificationMessageId = notificationMessage?.id || null;
+
+  return prisma.ticketChannel.upsert({
+    where: { channelId },
+    update: {
       escalated: true,
       escalatedAt: new Date(),
       escalatedRoleId: roleId,
-      escalationReason: reason || null,
-      escalationNotificationMessageId: notificationMessage.id,
+      escalationReason: cleanReason,
+      escalationNotificationMessageId: notificationMessageId,
+      aiEnabled: false,
+      lastAiAction: TICKET_ACTIONS.ESCALATE_TICKET,
+      lastAiActionAt: new Date(),
+      lastAiReplyAt: new Date(),
+    },
+    create: {
+      guildId,
+      channelId,
+      userId: authorId,
+      escalated: true,
+      escalatedAt: new Date(),
+      escalatedRoleId: roleId,
+      escalationReason: cleanReason,
+      escalationNotificationMessageId: notificationMessageId,
       aiEnabled: false,
       lastAiAction: TICKET_ACTIONS.ESCALATE_TICKET,
       lastAiActionAt: new Date(),
@@ -406,9 +477,24 @@ async function executeEscalateTicket({ actionRequest, message, validation }) {
 
 async function executeCloseTicket({ actionRequest, message }) {
   const replySent = await sendActionReply(message, actionRequest.text);
-  await prisma.ticketChannel.update({
-    where: { channelId: message.channel.id },
-    data: {
+  const guildId = message.guild?.id;
+  const channelId = message.channel.id;
+  const authorId = message.author?.id || null;
+
+  await prisma.ticketChannel.upsert({
+    where: { channelId },
+    update: {
+      closed: true,
+      status: "closed",
+      closedByAi: true,
+      closedAt: new Date(),
+      lastAiAction: TICKET_ACTIONS.CLOSE_TICKET,
+      lastAiActionAt: new Date(),
+    },
+    create: {
+      guildId,
+      channelId,
+      userId: authorId,
       closed: true,
       status: "closed",
       closedByAi: true,

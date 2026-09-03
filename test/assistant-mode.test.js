@@ -90,25 +90,36 @@ test("expired context keeps recent conversation without querying learned data or
   assert.deepEqual(context.learnedFreeform, []);
   assert.deepEqual(context.adminRoutes, []);
   assert.deepEqual(context.recentMessages, [{
+    speakerType: "user",
     authorName: "Sam",
     content: "My payment failed yesterday",
   }]);
 });
 
-test("expired assistant prompt is text-only and contains no premium action instructions", () => {
+test("expired assistant prompt is text-only and preserves Pixy conversation turns", () => {
   const messages = buildAssistantTicketPrompt({
     guildName: "Example Guild",
     channelName: "ticket-payment",
     userName: "Sam",
-    userMessage: "Can you explain what I should check?",
-    recentMessages: [{
-      authorName: "Sam",
-      content: "My payment failed yesterday",
-    }],
+    userMessage: "Yes",
+    recentMessages: [
+      {
+        speakerType: "user",
+        authorName: "Sam",
+        content: "My payment failed yesterday",
+      },
+      {
+        speakerType: "assistant",
+        authorName: "Pixy Tests",
+        content: "Do you want to continue with that?",
+      },
+    ],
   });
   const text = promptText(messages);
 
-  assert.match(text, /My payment failed yesterday/);
+  assert.match(text, /User \(Sam\): My payment failed yesterday/);
+  assert.match(text, /Pixy AI: Do you want to continue with that\?/);
+  assert.match(text, /Previous Pixy AI replies are conversation state only/);
   assert.match(text, /Return normal helpful text only/);
   assert.doesNotMatch(text, /close_ticket/);
   assert.doesNotMatch(text, /rename_ticket/);
@@ -123,7 +134,11 @@ test("prompt selection ignores learned and route context in expired mode", () =>
   const context = {
     guildName: "Example Guild",
     channelName: "ticket-payment",
-    recentMessages: [{ authorName: "Sam", content: "recent sentinel" }],
+    recentMessages: [{
+      speakerType: "user",
+      authorName: "Sam",
+      content: "recent sentinel",
+    }],
     learnedQna: [{ question: "LEARNED_QNA_SENTINEL", answer: "secret" }],
     learnedFreeform: [{ title: "LEARNED_FREEFORM_SENTINEL", content: "secret" }],
     adminRoutes: [{

@@ -15,7 +15,10 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:seed": "node prisma/seed-mysql.js",
     "pretest": "prisma generate",
-    "test": "node test/run-tests.js"
+    "test": "node test/run-tests.js",
+    "rag": "uv --directory rag-service run python -m app.main",
+    "rag:start": "uv --directory rag-service run python -m app.main",
+    "rag:sync": "node scripts/sync-rag.js"
   },
   "engines": {
     "node": ">=20"

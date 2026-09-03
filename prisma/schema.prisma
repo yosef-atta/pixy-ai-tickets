@@ -12,10 +12,10 @@ model GuildConfig {
   /// Legacy single-category compatibility field. TicketSource is the new source of truth.
   ticketCategoryId                String?               @db.VarChar(32)
   enabled                         Boolean               @default(true)
-  maxLearnedItems                 Int                   @default(50)
+  maxLearnedItems                 Int                   @default(1000)
   escalationCategoryId            String?               @db.VarChar(32)
   escalationNotificationChannelId String?               @db.VarChar(32)
-  maxAdminRoutes                  Int                   @default(10)
+  maxAdminRoutes                  Int                   @default(1000)
   createdAt                       DateTime              @default(now())
   updatedAt                       DateTime              @updatedAt
   learnedAnswers                  LearnedAnswer[]

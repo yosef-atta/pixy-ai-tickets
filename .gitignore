@@ -7,3 +7,11 @@ dev.db
 dev.db-journal
 test-*.db
 test-*.db-journal
+
+# Python / RAG service
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
