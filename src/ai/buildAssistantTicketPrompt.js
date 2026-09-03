@@ -5,9 +5,7 @@ const {
 
 function buildAssistantTicketPrompt(options = {}) {
   const messages = basePrompt.buildAssistantTicketPrompt(options);
-  return promoteRecentConversation(messages, options.recentMessages || [], {
-    currentUserMessage: options.userMessage || "",
-  });
+  return promoteRecentConversation(messages, options.recentMessages || []);
 }
 
 module.exports = {
