@@ -9,7 +9,6 @@ function buildTicketPrompt(options = {}) {
   const messages = buildBaseTicketPrompt(options);
   return promoteRecentConversation(messages, options.recentMessages || [], {
     nextContextHeading: "Server learned Q&A:",
-    currentUserMessage: options.userMessage || "",
   });
 }
 
