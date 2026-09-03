@@ -96,6 +96,8 @@ test("premium prompt uses one semantic policy regardless of exact acknowledgemen
   assert.match(first[0].content, /semantic meaning/);
   assert.match(first[0].content, /without repeating the same question/);
   assert.match(first[0].content, /continue that content instead of forcing it into a yes\/no interpretation/);
+  assert.match(first[0].content, /semantic relationship to the recent dialogue rather than from a fixed list of words/);
+  assert.doesNotMatch(first[0].content, /yes, no, okay, تمام, ايوه, نعم, or لا/);
   assert.equal(first.filter((message) => message.role === "system").length, 1);
 
   const currentIndex = second.length - 1;
@@ -123,7 +125,8 @@ test("semantic continuation policy preserves action-specific safety rules", () =
 
   const system = systemTexts(messages);
   assert.match(system, /Action-specific rules are stronger than this continuation policy/);
-  assert.match(system, /never infer a destructive action such as close_ticket/);
+  assert.match(system, /Never infer or perform a destructive or privileged application action/);
+  assert.match(system, /current mode exposes that action and its existing validation policy allows it/);
   assert.match(system, /all grounding, safety, entitlement, and application action validation rules remain in force/);
 });
 
@@ -139,6 +142,8 @@ test("assistant-only prompt gets semantic continuity without premium actions", (
 
   assert.equal(messages.filter((message) => message.role === "system").length, 1);
   assert.match(systemTexts(messages), /semantic meaning/);
+  assert.match(systemTexts(messages), /semantic relationship to the recent dialogue rather than from a fixed list of words/);
+  assert.doesNotMatch(text, /yes, no, okay, تمام, ايوه, نعم, or لا/);
   assert.doesNotMatch(text, /close_ticket/);
   assert.doesNotMatch(text, /rename_ticket/);
   assert.doesNotMatch(text, /escalate_ticket/);
