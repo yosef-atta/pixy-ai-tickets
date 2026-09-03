@@ -35,3 +35,11 @@ filterwarnings = [
     "ignore:.*Using `httpx` with `starlette.testclient` is deprecated.*:DeprecationWarning",
     "ignore:.*Api key is used with an insecure connection.*:UserWarning",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
