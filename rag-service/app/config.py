@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # Model settings
     EMBEDDING_MODEL: str = "intfloat/multilingual-e5-large"
-    RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
+    RERANKER_MODEL: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     LOCAL_FILES_ONLY: bool = True
     TORCH_DEVICE: Optional[str] = None  # None for auto-detection
 
