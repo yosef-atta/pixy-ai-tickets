@@ -3,59 +3,6 @@ const {
   cleanConversationContent,
 } = require("./conversationHistory");
 
-const AFFIRMATIVE_SHORT_REPLIES = new Set([
-  "تمام",
-  "ايوه",
-  "أيوه",
-  "ايوا",
-  "أيوة",
-  "اه",
-  "آه",
-  "نعم",
-  "ماشي",
-  "اوك",
-  "أوك",
-  "اوكي",
-  "أوكي",
-  "yes",
-  "yeah",
-  "yep",
-  "yup",
-  "ok",
-  "okay",
-  "sure",
-  "sounds good",
-  "go ahead",
-  "do it",
-]);
-
-const NEGATIVE_SHORT_REPLIES = new Set([
-  "لا",
-  "لأ",
-  "مش دلوقتي",
-  "لا شكرا",
-  "لا شكرًا",
-  "no",
-  "nope",
-  "nah",
-  "not now",
-  "no thanks",
-]);
-
-function normalizeShortReply(value) {
-  return cleanConversationContent(value)
-    .toLowerCase()
-    .replace(/[!?.،؟]+/g, "")
-    .trim();
-}
-
-function classifyShortReply(value) {
-  const normalized = normalizeShortReply(value);
-  if (AFFIRMATIVE_SHORT_REPLIES.has(normalized)) return "affirmative";
-  if (NEGATIVE_SHORT_REPLIES.has(normalized)) return "negative";
-  return null;
-}
-
 function buildConversationRoleMessages(recentMessages = []) {
   return (recentMessages || [])
     .map((messageItem) => {
@@ -79,28 +26,22 @@ function buildConversationRoleMessages(recentMessages = []) {
     .filter(Boolean);
 }
 
-function buildShortReplyContinuationHint(recentMessages = [], currentUserMessage = "") {
-  const signal = classifyShortReply(currentUserMessage);
-  if (!signal || !recentMessages.length) return null;
+function buildSemanticContinuationPolicy(recentMessages = []) {
+  if (!recentMessages.length) return null;
 
   const previousTurn = recentMessages[recentMessages.length - 1];
   if (previousTurn?.speakerType !== SPEAKER_TYPES.ASSISTANT) return null;
 
-  if (signal === "affirmative") {
-    return [
-      "Conversation state note:",
-      "- The current user message is a short affirmative response to the immediately preceding Pixy AI turn.",
-      "- When that preceding turn is a yes/no question, confirmation, or offer, treat the reply as acceptance and continue with the offered next step immediately.",
-      "- Do not repeat the same question or offer after it has just been accepted.",
-      "- This note resolves dialogue intent only. It does not make previous Pixy claims authoritative and it never bypasses grounding, safety, entitlement, or application action validation rules.",
-    ].join("\n");
-  }
-
   return [
-    "Conversation state note:",
-    "- The current user message is a short negative response to the immediately preceding Pixy AI turn.",
-    "- When that preceding turn is a yes/no question, confirmation, or offer, treat the reply as a rejection and continue appropriately without repeating the same offer immediately.",
-    "- This note resolves dialogue intent only. It does not make previous Pixy claims authoritative and it never bypasses grounding, safety, entitlement, or application action validation rules.",
+    "Conversation continuation policy:",
+    "- Interpret the current user reply by its semantic meaning in the immediately preceding dialogue, not by exact keyword matching.",
+    "- Give the immediately preceding Pixy AI turn the strongest conversational weight when resolving a brief, elliptical, or context-dependent reply.",
+    "- If the current reply is most naturally understood as accepting, confirming, approving, or consenting to the immediately preceding Pixy AI question or offer, treat that turn as accepted and continue the offered next step immediately. Do not repeat the same question or offer.",
+    "- If the current reply is most naturally understood as rejecting, declining, cancelling, or withholding consent, treat that turn as rejected and do not proceed with or immediately repeat the rejected offer.",
+    "- If the current reply is ambiguous, mixed, or starts a new topic, do not force it into acceptance or rejection. Continue the new topic or ask one concise clarification only when needed.",
+    "- Apply this reasoning across languages, dialects, slang, spelling variation, punctuation, and conversational shorthand. Do not require a fixed vocabulary of canonical yes/no words.",
+    "- This policy resolves dialogue intent only. Previous Pixy AI claims remain non-authoritative, and all grounding, safety, entitlement, and application action validation rules remain in force.",
+    "- Action-specific rules are stronger than this continuation policy. In particular, never infer a destructive action such as close_ticket unless its existing action policy allows it.",
   ].join("\n");
 }
 
@@ -126,15 +67,12 @@ function stripEmbeddedRecentConversation(content, nextHeading = null) {
 function promoteRecentConversation(
   messages,
   recentMessages = [],
-  { nextContextHeading = null, currentUserMessage = "" } = {}
+  { nextContextHeading = null } = {}
 ) {
   if (!Array.isArray(messages) || messages.length < 3) return messages;
 
   const roleMessages = buildConversationRoleMessages(recentMessages);
-  const continuationHint = buildShortReplyContinuationHint(
-    recentMessages,
-    currentUserMessage
-  );
+  const continuationPolicy = buildSemanticContinuationPolicy(recentMessages);
   const output = messages.map((message) => ({ ...message }));
 
   if (output[0]?.role === "system") {
@@ -146,8 +84,8 @@ function promoteRecentConversation(
       ].join("\n")
     );
 
-    if (continuationHint) {
-      output[0].content = `${output[0].content}\n\n${continuationHint}`;
+    if (continuationPolicy) {
+      output[0].content = `${output[0].content}\n\n${continuationPolicy}`;
     }
   }
 
@@ -163,12 +101,8 @@ function promoteRecentConversation(
 }
 
 module.exports = {
-  AFFIRMATIVE_SHORT_REPLIES,
-  NEGATIVE_SHORT_REPLIES,
   buildConversationRoleMessages,
-  buildShortReplyContinuationHint,
-  classifyShortReply,
-  normalizeShortReply,
+  buildSemanticContinuationPolicy,
   promoteRecentConversation,
   stripEmbeddedRecentConversation,
 };
