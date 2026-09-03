@@ -8,6 +8,10 @@ function getDefaultPrisma() {
   return require("../config/prisma").prisma;
 }
 
+function getDefaultRagPurge() {
+  return require("../ai/ragClient").syncAllKnowledge;
+}
+
 function buildOperationalDeleteOperations(client, guildId) {
   const normalizedGuildId = normalizeGuildId(guildId);
   return [
@@ -37,11 +41,28 @@ async function deleteGuildOperationalData(guildId, options = {}) {
     0
   );
 
+  let ragPurged = false;
+  const ragPurge = typeof options.ragPurge === "function"
+    ? options.ragPurge
+    : options.client
+      ? null
+      : getDefaultRagPurge();
+
+  if (ragPurge) {
+    const purgeResult = await ragPurge({
+      guildId: normalizedGuildId,
+      clearExisting: true,
+      timeoutMs: 30000,
+    }).catch(() => null);
+    ragPurged = Boolean(purgeResult?.ok);
+  }
+
   return {
     guildId: normalizedGuildId,
     results,
     totalDeleted,
     billingPreserved: true,
+    ragPurged,
   };
 }
 

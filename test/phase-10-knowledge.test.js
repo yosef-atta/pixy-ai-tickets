@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  clearKnowledge,
   importKnowledgeQnaBulk,
   parseBulkQnaText,
 } = require("../src/settings/knowledgeService");
@@ -122,4 +123,71 @@ Q: Missing answer
   assert.equal(result.added, 1);
   assert.equal(result.incomplete, 1);
   assert.equal(client.snapshot().length, 1);
+});
+
+test("clear knowledge deletes only learned-answer vectors and preserves admin-route vector scope", async () => {
+  const learnedIds = ["knowledge-qna-1", "knowledge-freeform-2"];
+  const adminRouteId = "admin-route-billing-1";
+  let rows = learnedIds.map((id) => ({ id, guildId: GUILD_ID }));
+  const ragDeletes = [];
+
+  const client = {
+    learnedAnswer: {
+      async findMany({ where, select } = {}) {
+        assert.deepEqual(where, { guildId: GUILD_ID });
+        assert.deepEqual(select, { id: true });
+        return rows.map(({ id }) => ({ id }));
+      },
+      async deleteMany({ where } = {}) {
+        assert.deepEqual(where, { guildId: GUILD_ID });
+        const count = rows.length;
+        rows = [];
+        return { count };
+      },
+    },
+  };
+
+  const result = await clearKnowledge(GUILD_ID, {
+    client,
+    deleteKnowledge: async (payload) => {
+      ragDeletes.push(payload);
+      return { ok: true, deletedItemIds: payload.itemIds };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deleted, 2);
+  assert.equal(rows.length, 0);
+  assert.deepEqual(ragDeletes, [
+    {
+      guildId: GUILD_ID,
+      itemIds: learnedIds,
+    },
+  ]);
+  assert.equal(ragDeletes[0].itemIds.includes(adminRouteId), false);
+});
+
+test("clear knowledge skips RAG deletion when the guild has no learned items", async () => {
+  let ragDeleteCalls = 0;
+  const client = {
+    learnedAnswer: {
+      async findMany() {
+        return [];
+      },
+      async deleteMany() {
+        return { count: 0 };
+      },
+    },
+  };
+
+  const result = await clearKnowledge(GUILD_ID, {
+    client,
+    deleteKnowledge: async () => {
+      ragDeleteCalls += 1;
+      return { ok: true };
+    },
+  });
+
+  assert.deepEqual(result, { ok: true, deleted: 0 });
+  assert.equal(ragDeleteCalls, 0);
 });

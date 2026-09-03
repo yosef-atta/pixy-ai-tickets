@@ -2,7 +2,6 @@ const { prisma } = require("../config/prisma");
 const { DEFAULT_MAX_LEARNED_ITEMS } = require("../config/productDefaults");
 const {
   deleteKnowledge,
-  syncAllKnowledge,
   upsertKnowledge,
 } = require("../ai/ragClient");
 
@@ -331,8 +330,22 @@ async function deleteKnowledgeItem(guildId, itemId, options = {}) {
 
 async function clearKnowledge(guildId, options = {}) {
   const client = options.client || prisma;
+  const deleteFromRag = options.deleteKnowledge || deleteKnowledge;
+
+  const items = await client.learnedAnswer.findMany({
+    where: { guildId },
+    select: { id: true },
+  });
+  const itemIds = items
+    .map((item) => String(item?.id || "").trim())
+    .filter(Boolean);
+
   const result = await client.learnedAnswer.deleteMany({ where: { guildId } });
-  syncAllKnowledge({ guildId, clearExisting: true }).catch(() => null);
+
+  if (itemIds.length > 0) {
+    deleteFromRag({ guildId, itemIds }).catch(() => null);
+  }
+
   return { ok: true, deleted: Number(result?.count || 0) };
 }
 

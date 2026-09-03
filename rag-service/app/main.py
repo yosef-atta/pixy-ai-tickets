@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from time import perf_counter
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -15,7 +16,6 @@ from app.routes.search import router as search_router
 from app.routes.sync_all import router as sync_all_router
 from app.routes.upsert import router as upsert_router
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -26,28 +26,54 @@ logger = logging.getLogger("rag-service")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Pixy RAG Service...")
-    
-    # 1. Initialize Qdrant collection and payload indexes
+
     try:
         qdrant_manager.init_collection()
-    except Exception as e:
-        logger.warning(f"Could not connect/init Qdrant during startup: {e}. Will retry on requests.")
+    except Exception as exc:
+        logger.warning(
+            f"Could not connect/init Qdrant during startup: {exc}. Will retry on requests."
+        )
 
-    # 2. Warm up embedding model
+    warmup_started = perf_counter()
     try:
-        embedding_manager.get_model()
-        logger.info(f"Embedding model '{settings.EMBEDDING_MODEL}' initialized on device '{embedding_manager.device}'.")
-    except Exception as e:
-        logger.error(f"Failed to initialize embedding model: {e}")
+        embedding_manager.embed_query("Pixy RAG startup warmup")
+        logger.info(
+            "Embedding model '%s' warmed with real inference on device '%s'.",
+            settings.EMBEDDING_MODEL,
+            embedding_manager.device,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to warm embedding model: {exc}", exc_info=True)
 
-    # 3. Warm up reranker model
     try:
-        reranker_manager.get_model()
-        logger.info(f"Reranker model '{settings.RERANKER_MODEL}' initialized on device '{reranker_manager.device}'.")
-    except Exception as e:
-        logger.error(f"Failed to initialize reranker model: {e}")
+        reranker_manager.score_candidates(
+            "Pixy RAG startup warmup",
+            [
+                {
+                    "id": "warmup",
+                    "item_id": "warmup",
+                    "guild_id": "warmup",
+                    "item_type": "freeform",
+                    "title": "Warmup",
+                    "text": "Pixy RAG startup warmup",
+                    "vector_score": 1.0,
+                    "score": 1.0,
+                    "metadata": {},
+                }
+            ],
+        )
+        logger.info(
+            "Reranker model '%s' warmed with real inference on device '%s'.",
+            settings.RERANKER_MODEL,
+            reranker_manager.device,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to warm reranker model: {exc}", exc_info=True)
 
-    logger.info("Pixy RAG Service is ready to serve requests.")
+    logger.info(
+        "Pixy RAG Service is ready to serve requests after %.2f ms startup warmup.",
+        (perf_counter() - warmup_started) * 1000,
+    )
     yield
     logger.info("Shutting down Pixy RAG Service.")
 
@@ -59,7 +85,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -68,16 +93,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global Exception Handler
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled server error on {request.method} {request.url.path}: {exc}", exc_info=True)
+    logger.error(
+        f"Unhandled server error on {request.method} {request.url.path}: {exc}",
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error", "error": str(exc)},
     )
 
-# Include API routes
+
 app.include_router(health_router)
 app.include_router(search_router, prefix="/api", tags=["Search"])
 app.include_router(upsert_router, prefix="/api", tags=["Upsert"])

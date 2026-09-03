@@ -23,6 +23,14 @@ const ragConfig = Object.freeze({
     const val = Number(process.env.RAG_TOP_K || 5);
     return Number.isFinite(val) && val > 0 ? Math.floor(val) : 5;
   },
+  get routeCandidateK() {
+    const val = Number(process.env.RAG_ROUTE_CANDIDATE_K || 10);
+    return Number.isFinite(val) && val > 0 ? Math.floor(val) : 10;
+  },
+  get routeTopK() {
+    const val = Number(process.env.RAG_ROUTE_TOP_K || 3);
+    return Number.isFinite(val) && val > 0 ? Math.floor(val) : 3;
+  },
   get minScore() {
     const val = Number(process.env.RAG_MIN_SCORE || 0.0);
     return Number.isFinite(val) ? val : 0.0;
