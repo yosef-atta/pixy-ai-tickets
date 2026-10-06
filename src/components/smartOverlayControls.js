@@ -18,13 +18,28 @@ function buildSmartOverlayContent(aiEnabled = true, options = {}) {
   const premiumEntitled = isPremium(options);
   const escalated = options.escalated === true;
 
+  if (!premiumEntitled) {
+    return [
+      "Hello 👋 I'm Pixy AI. Ask your question here and I'll try to assist.",
+      "",
+      "**Pixy AI Control (Basic Mode)**",
+      "⚠️ **Subscription / Trial Expired:** Server knowledge and Pixy Pro ticket actions are unavailable on the current plan.",
+      "Staff can pause or resume automatic replies from the menu below.",
+      options.escalated === true
+        ? "🤝 **Human support requested** — this ticket has already been handed off for review."
+        : null,
+      "",
+      aiEnabled
+        ? "🤖 **Pixy AI is ON** — staff can pause automatic replies from the menu below."
+        : "⏸️ **Pixy AI is OFF** — staff can resume automatic replies from the menu below.",
+    ].filter((line) => line !== null).join("\n");
+  }
+
   const handoffLine = escalated
     ? "🤝 **Human support requested** — Pixy has handed this ticket off for human review."
-    : premiumEntitled && escalationEnabled
+    : escalationEnabled
       ? "If human review is needed, Pixy can hand the conversation off to the configured support team."
-      : premiumEntitled
-        ? "Human handoff is currently disabled by this server's administrators."
-        : "Pixy Pro ticket actions are unavailable on the current plan.";
+      : "Human handoff is currently disabled by this server's administrators.";
 
   return [
     "Hello 👋 I'm Pixy AI. Ask your question here and I'll try to help using this server's knowledge.",

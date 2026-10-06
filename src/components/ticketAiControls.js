@@ -50,17 +50,30 @@ function buildTicketControlContent(aiEnabled = true, options = {}) {
   const { premiumEntitled } = resolveTicketControlRenderState(options);
   const mode = resolveTicketOperatingMode(options.settings);
 
+  if (!premiumEntitled) {
+    return [
+      "Hello 👋 I'm Pixy AI. Ask your question here and I'll try to assist while staff reviews your ticket.",
+      "",
+      "**Pixy AI Control (Basic Mode)**",
+      "⚠️ **Subscription / Trial Expired:** Server knowledge and Pixy Pro ticket actions are unavailable on the current plan.",
+      "Staff can pause or resume automatic replies using the menu below.",
+      options.escalated === true
+        ? "🤝 **Human support requested** — this ticket has already been handed off for review."
+        : null,
+      "",
+      aiEnabled
+        ? "🤖 **Pixy AI is ON** — staff can pause automatic replies at any time."
+        : "⏸️ **Pixy AI is OFF** — staff can resume automatic replies at any time.",
+    ].filter((line) => line !== null).join("\n");
+  }
+
   return [
     "Hello 👋 I'm Pixy AI. Ask your question here and I'll try to help while the support team reviews your ticket.",
     "",
-    premiumEntitled
-      ? mode === TICKET_OPERATING_MODES.CUSTOM
-        ? "**Custom Ticket Controls**"
-        : "**Ticket Actions**"
-      : "**Pixy AI Control**",
-    premiumEntitled
-      ? "Use the menu below for the ticket actions enabled by this server and to pause or resume Pixy AI."
-      : "Pixy Pro ticket actions are unavailable, but server staff can still pause or resume automatic AI replies.",
+    mode === TICKET_OPERATING_MODES.CUSTOM
+      ? "**Custom Ticket Controls**"
+      : "**Ticket Actions**",
+    "Use the menu below for the ticket actions enabled by this server and to pause or resume Pixy AI.",
     options.escalated === true
       ? "🤝 **Human support requested** — this ticket has already been handed off for review."
       : null,

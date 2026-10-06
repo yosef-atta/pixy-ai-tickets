@@ -338,20 +338,33 @@ async function renderBehavior(guild, userId, notice = null) {
     prisma.adminRoute.count({ where: { guildId, enabled: true } }),
   ]);
   const mode = resolveTicketOperatingMode(setting);
+  const isExpired = billing.plan === "expired";
   const humanConfigured = Boolean(config?.escalationCategoryId && routeCount > 0);
 
+  const description = isExpired
+    ? [
+        "🔒 **Feature Locked: Subscription / Trial Expired**",
+        "",
+        "⚠️ **Ticket agent actions are currently locked:** This server's trial has ended.",
+        "Preferences configured below are saved, but Pixy will not close, rename, or escalate tickets automatically until Pixy Pro is activated.",
+        "",
+        "👉 Use `/pixy-billing` to view renewal and activation options.",
+      ].join("\n")
+    : [
+        behaviorPlanNote(billing),
+        "",
+        "**Smart Overlay** keeps Pixy away from the ticket lifecycle: Close and Rename stay off. Human Escalation can stay enabled or disabled independently.",
+        "**Full Ticket Control** enables Close, Rename, and Escalation only after Pixy passes its permission preflight.",
+        "**Thread tickets always use Smart Overlay** for lifecycle safety, even when channel tickets use Full Ticket Control.",
+      ].join("\n");
+
   const embed = new EmbedBuilder()
-    .setTitle("Ticket Behavior")
-    .setColor(mode === TICKET_OPERATING_MODES.FULL ? 0xfee75c : 0x5865f2)
-    .setDescription([
-      behaviorPlanNote(billing),
-      "",
-      "**Smart Overlay** keeps Pixy away from the ticket lifecycle: Close and Rename stay off. Human Escalation can stay enabled or disabled independently.",
-      "**Full Ticket Control** enables Close, Rename, and Escalation only after Pixy passes its permission preflight.",
-      "**Thread tickets always use Smart Overlay** for lifecycle safety, even when channel tickets use Full Ticket Control.",
-    ].join("\n"))
+    .setTitle(isExpired ? "Ticket Behavior — Actions Locked 🔒" : "Ticket Behavior")
+    .setColor(isExpired ? 0xed4245 : (mode === TICKET_OPERATING_MODES.FULL ? 0xfee75c : 0x5865f2))
+    .setDescription(description)
     .addFields(
-      { name: "Operating Mode", value: `**${modeLabel(mode)}**`, inline: true },
+      { name: "Plan", value: isExpired ? `🔴 **${billing.planLabel}**` : `🟢 **${billing.planLabel}**`, inline: true },
+      { name: "Operating Mode", value: isExpired ? `**${modeLabel(mode)}** 🔒` : `**${modeLabel(mode)}**`, inline: true },
       {
         name: "Human Support",
         value: humanConfigured ? `Configured • ${routeCount} route${routeCount === 1 ? "" : "s"}` : "Needs `/pixy-setup`",
@@ -364,25 +377,25 @@ async function renderBehavior(guild, userId, notice = null) {
       },
       ...BEHAVIOR_FEATURES.map(({ field, label }) => ({
         name: label,
-        value: enabledLabel(setting[field] === true),
+        value: isExpired ? `${enabledLabel(setting[field] === true)} 🔒` : enabledLabel(setting[field] === true),
         inline: true,
       }))
     );
 
   const modeMenu = createStringSelectMenus({
     customId: scoped(PREFIX.MODE, userId),
-    placeholder: "Apply an operating mode preset...",
+    placeholder: isExpired ? "Apply operating mode preset (actions locked)..." : "Apply an operating mode preset...",
     includeReset: false,
     options: [
       {
-        label: "Smart Overlay (recommended)",
+        label: isExpired ? "Smart Overlay (recommended) 🔒" : "Smart Overlay (recommended)",
         description: "Disable Close and Rename; preserve your escalation choice",
         value: TICKET_OPERATING_MODES.OVERLAY,
         emoji: "🛡️",
       },
       {
-        label: "Full Ticket Control",
-        description: "Enable Close, Rename, and Human Escalation after preflight",
+        label: isExpired ? "Full Ticket Control (Locked - Requires Pro)" : "Full Ticket Control",
+        description: isExpired ? "Requires active Pixy Pro subscription" : "Enable Close, Rename, and Human Escalation after preflight",
         value: TICKET_OPERATING_MODES.FULL,
         emoji: "🧰",
       },
@@ -391,10 +404,10 @@ async function renderBehavior(guild, userId, notice = null) {
 
   const toggleMenu = createStringSelectMenus({
     customId: scoped(PREFIX.TOGGLE, userId),
-    placeholder: "Toggle an individual behavior...",
+    placeholder: isExpired ? "Toggle behavior (preferences saved, actions locked)..." : "Toggle an individual behavior...",
     options: BEHAVIOR_FEATURES.map((feature) => ({
-      label: `Toggle ${feature.label}`,
-      description: feature.description,
+      label: isExpired ? `Toggle ${feature.label} (Locked)` : `Toggle ${feature.label}`,
+      description: isExpired ? `${feature.description} (Requires Pixy Pro)` : feature.description,
       value: feature.field,
       emoji: feature.emoji,
     })),
