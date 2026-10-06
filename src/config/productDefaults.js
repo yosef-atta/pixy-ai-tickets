@@ -15,12 +15,19 @@ const SETUP_STEPS = Object.freeze({
   COMPLETE: "complete",
 });
 
+const ESCALATION_MENTION_TARGETS = Object.freeze({
+  OUTSIDE: "outside",
+  INSIDE: "inside",
+  BOTH: "both",
+});
+
 const DEFAULT_GUILD_SETTINGS = Object.freeze({
   aiReplyEnabled: true,
   closeTicketEnabled: false,
   renameReviewEnabled: false,
   escalationEnabled: true,
   agentActionsEnabled: true,
+  escalationMentionTarget: ESCALATION_MENTION_TARGETS.OUTSIDE,
 });
 
 module.exports = {
@@ -29,6 +36,7 @@ module.exports = {
   DEFAULT_GUILD_SETTINGS,
   DEFAULT_MAX_ADMIN_ROUTES,
   DEFAULT_MAX_LEARNED_ITEMS,
+  ESCALATION_MENTION_TARGETS,
   SETUP_STEPS,
   TICKET_SOURCE_TYPES,
 };

@@ -173,6 +173,7 @@ model GuildSetting {
   renameReviewEnabled  Boolean            @default(false)
   escalationEnabled    Boolean            @default(true)
   agentActionsEnabled  Boolean            @default(true)
+  escalationMentionTarget String          @default("outside") @db.VarChar(32)
   /// Legacy Groq credential compatibility field. GuildAiConfig is the new credential foundation.
   groqApiKeyEncrypted  String?            @db.Text
   /// Legacy model compatibility field. GuildAiConfig is the new model foundation.

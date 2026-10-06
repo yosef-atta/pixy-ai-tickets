@@ -11,6 +11,9 @@ const {
 const {
   preflightFullControlForGuild,
 } = require("../utils/tickets/humanSupportPermissions");
+const {
+  ESCALATION_MENTION_TARGETS,
+} = require("../config/productDefaults");
 
 const BEHAVIOR_FIELDS = Object.freeze([
   "aiReplyEnabled",
@@ -203,15 +206,53 @@ async function toggleBehaviorField(guild, field, options = {}) {
   });
 }
 
+const VALID_ESCALATION_MENTION_TARGETS = new Set(
+  Object.values(ESCALATION_MENTION_TARGETS)
+);
+
+function normalizeEscalationMentionTarget(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return VALID_ESCALATION_MENTION_TARGETS.has(normalized)
+    ? normalized
+    : ESCALATION_MENTION_TARGETS.OUTSIDE;
+}
+
+function getNextEscalationMentionTarget(current) {
+  const normalized = normalizeEscalationMentionTarget(current);
+  if (normalized === ESCALATION_MENTION_TARGETS.OUTSIDE) {
+    return ESCALATION_MENTION_TARGETS.INSIDE;
+  }
+  if (normalized === ESCALATION_MENTION_TARGETS.INSIDE) {
+    return ESCALATION_MENTION_TARGETS.BOTH;
+  }
+  return ESCALATION_MENTION_TARGETS.OUTSIDE;
+}
+
+async function setEscalationMentionTarget(guildId, target, options = {}) {
+  const client = options.client || prisma;
+  const normalizedTarget = normalizeEscalationMentionTarget(target);
+  const getSetting = options.getSetting || getOrCreateGuildSetting;
+  await getSetting(guildId);
+  return client.guildSetting.update({
+    where: { guildId },
+    data: { escalationMentionTarget: normalizedTarget },
+  });
+}
+
 module.exports = {
   BEHAVIOR_FIELDS,
   BEHAVIOR_FIELD_SET,
   CONTROL_FIELDS,
+  ESCALATION_MENTION_TARGETS,
+  VALID_ESCALATION_MENTION_TARGETS,
   buildProspectiveSettings,
   getExistingCoreConfig,
+  getNextEscalationMentionTarget,
+  normalizeEscalationMentionTarget,
   pickBehaviorSettings,
   requiresControlRefresh,
   saveBehaviorPatch,
+  setEscalationMentionTarget,
   setTicketOperatingMode,
   toggleBehaviorField,
 };

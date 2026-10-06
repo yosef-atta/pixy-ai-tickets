@@ -24,6 +24,7 @@ const {
   resolveTicketOperatingMode,
 } = require("../features/ticketOperatingMode");
 const {
+  setEscalationMentionTarget,
   setTicketOperatingMode,
   toggleBehaviorField,
 } = require("../settings/ticketBehaviorService");
@@ -66,6 +67,7 @@ const PREFIX = Object.freeze({
 
   MODE: "settings_mode:",
   TOGGLE: "settings_toggle:",
+  MENTION_TARGET: "settings_mention_target:",
 
   KNOWLEDGE_ADD_QNA: "settings_knowledge_add_qna:",
   KNOWLEDGE_ADD_QNA_MODAL: "settings_knowledge_add_qna_modal:",
@@ -248,6 +250,12 @@ function enabledLabel(enabled) {
   return enabled ? "✅ Enabled" : "❌ Disabled";
 }
 
+function formatMentionTargetLabel(target) {
+  if (target === "inside") return "🎫 Inside Ticket";
+  if (target === "both") return "🔔 Both Channels";
+  return "🏢 Outside Channel";
+}
+
 function formatPreflightIssues(preflight) {
   const lines = [];
   for (const issue of preflight?.issues || []) {
@@ -340,6 +348,11 @@ async function renderBehavior(guild, userId, notice = null) {
         value: humanConfigured ? `Configured • ${routeCount} route${routeCount === 1 ? "" : "s"}` : "Needs `/pixy-setup`",
         inline: true,
       },
+      {
+        name: "Support Role Mention",
+        value: formatMentionTargetLabel(setting.escalationMentionTarget),
+        inline: true,
+      },
       ...BEHAVIOR_FEATURES.map(({ field, label }) => ({
         name: label,
         value: enabledLabel(setting[field] === true),
@@ -378,10 +391,39 @@ async function renderBehavior(guild, userId, notice = null) {
     })),
   });
 
+  const mentionMenu = createStringSelectMenus({
+    customId: scoped(PREFIX.MENTION_TARGET, userId),
+    placeholder: "Set support role mention location...",
+    includeReset: false,
+    options: [
+      {
+        label: "Outside Channel (default)",
+        description: "Ping support role in notification channel only",
+        value: "outside",
+        emoji: "🏢",
+        default: (setting.escalationMentionTarget || "outside") === "outside",
+      },
+      {
+        label: "Inside Ticket",
+        description: "Ping support role directly inside each ticket",
+        value: "inside",
+        emoji: "🎫",
+        default: setting.escalationMentionTarget === "inside",
+      },
+      {
+        label: "Both Channels",
+        description: "Ping support role both inside ticket and notifications",
+        value: "both",
+        emoji: "🔔",
+        default: setting.escalationMentionTarget === "both",
+      },
+    ],
+  });
+
   return {
     content: notice,
     embeds: [embed],
-    components: [...modeMenu, ...toggleMenu, navigation(userId)],
+    components: [...modeMenu, ...toggleMenu, ...mentionMenu, navigation(userId)],
   };
 }
 
@@ -1002,6 +1044,25 @@ const command = {
                 "Fix the missing setup/permissions or keep Smart Overlay.",
               ].join("\n")
             : `Pixy could not update that behavior: ${result.code || "unknown_error"}.`;
+        await editPanel(interaction, await renderBehavior(interaction.guild, userId, notice));
+      },
+    },
+    {
+      customIdPrefix: PREFIX.MENTION_TARGET,
+      type: "string",
+      async execute(interaction) {
+        const [userId] = parseScoped(interaction.customId, PREFIX.MENTION_TARGET);
+        if (!(await assertOwner(interaction, userId))) return;
+        const target = interaction.values?.[0];
+        if (target === "reset") {
+          await editPanel(interaction, await renderBehavior(interaction.guild, userId));
+          return;
+        }
+        if (!["outside", "inside", "both"].includes(target)) return;
+
+        await deferUpdate(interaction);
+        await setEscalationMentionTarget(interaction.guild.id, target);
+        const notice = `Support role mention location set to **${formatMentionTargetLabel(target)}**.`;
         await editPanel(interaction, await renderBehavior(interaction.guild, userId, notice));
       },
     },

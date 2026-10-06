@@ -323,13 +323,18 @@ async function sendEscalationNotification({
   requestedBy,
   newName,
   summary,
+  mentionRole = true,
 }) {
   const recentContext = await getRecentTicketContext(ticketChannel);
   const details = summary && typeof summary === "object" && !Array.isArray(summary)
     ? summary
     : {};
-  const roleCanBePinged = await canMentionRoleInChannel(notificationChannel, role);
+  const roleCanBePinged = mentionRole && await canMentionRoleInChannel(notificationChannel, role);
   const threadTicket = isThreadTicketChannel(ticketChannel);
+
+  const rolePingNotice = mentionRole
+    ? (roleCanBePinged ? null : "**Role Ping:** Not sent — the role is not mentionable. The handoff still completed.")
+    : "**Role Ping:** Not sent — support role is configured to be pinged inside the ticket channel.";
 
   const sections = [
     "🚨 **Ticket Escalated**",
@@ -337,7 +342,7 @@ async function sendEscalationNotification({
     `**${threadTicket ? "Ticket Thread" : "Ticket Channel"}:** <#${ticketChannel.id}>`,
     `**Support Role:** <@&${role.id}>`,
     `**Support Team:** ${role.name}`,
-    roleCanBePinged ? null : "**Role Ping:** Not sent — the role is not mentionable. The handoff still completed.",
+    rolePingNotice,
     `**${threadTicket ? "Thread Name" : "New Ticket Name"}:** ${newName || ticketChannel.name}`,
     routeId ? `**Route ID:** \`${routeId}\`` : null,
     requestedBy
