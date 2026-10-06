@@ -8,6 +8,7 @@ const {
   isFullTicketControlEnabled,
 } = require("../../../features/ticketOperatingMode");
 const {
+  canMentionRoleInChannel,
   getOrCreateEscalationNotificationChannel,
   sendEscalationNotification,
 } = require("../escalationNotifications");
@@ -32,9 +33,33 @@ async function sendActionReply(message, text) {
   return true;
 }
 
-async function sendTicketEscalationReply({ message, roleName, text }) {
-  const content = limitReplyText(text) || `This ticket has been escalated to ${roleName}. Please wait for them to respond here.`;
-  await message.channel.send({ content, allowedMentions: { parse: [] } });
+async function sendTicketEscalationReply({
+  message,
+  roleName,
+  text,
+  role = null,
+  mentionRoleInTicket = false,
+}) {
+  let content = limitReplyText(text) || `This ticket has been escalated to ${roleName}. Please wait for them to respond here.`;
+  let roleCanBePinged = false;
+
+  if (mentionRoleInTicket && role?.id) {
+    roleCanBePinged = await canMentionRoleInChannel(message.channel, role);
+    const mentionToken = `<@&${role.id}>`;
+    if (!content.includes(mentionToken)) {
+      content = `${mentionToken} ${content}`;
+    }
+  }
+
+  await message.channel.send({
+    content,
+    allowedMentions: {
+      roles: (mentionRoleInTicket && roleCanBePinged && role?.id) ? [role.id] : [],
+      parse: [],
+      users: [],
+      repliedUser: false,
+    },
+  });
   return true;
 }
 
@@ -267,6 +292,10 @@ async function performOverlayHandoff({
   notificationMessage = null,
   degradationCode = null,
 }) {
+  const mentionTarget = settings?.escalationMentionTarget || "outside";
+  const mentionInNotification = mentionTarget === "outside" || mentionTarget === "both";
+  const mentionInTicket = mentionTarget === "inside" || mentionTarget === "both";
+
   const sentNotification = notificationMessage || await sendEscalationNotification({
     notificationChannel,
     ticketChannel: message.channel,
@@ -276,6 +305,7 @@ async function performOverlayHandoff({
     requestedBy: message.author,
     newName: message.channel.name,
     summary: actionRequest.data?.summary,
+    mentionRole: mentionInNotification,
   });
 
   await persistEscalationState({
@@ -291,6 +321,8 @@ async function performOverlayHandoff({
       message,
       roleName: roleName || role.name,
       text: buildOverlayHandoffReply(actionRequest, roleName || role.name),
+      role,
+      mentionRoleInTicket: mentionInTicket,
     });
   } catch (error) {
     console.error("Failed to send overlay handoff reply:", error);
@@ -397,6 +429,10 @@ async function executeEscalateTicket({ actionRequest, message, validation }) {
     });
   }
 
+  const mentionTarget = settings?.escalationMentionTarget || "outside";
+  const mentionInNotification = mentionTarget === "outside" || mentionTarget === "both";
+  const mentionInTicket = mentionTarget === "inside" || mentionTarget === "both";
+
   let notificationMessage = null;
   try {
     notificationMessage = await sendEscalationNotification({
@@ -408,6 +444,7 @@ async function executeEscalateTicket({ actionRequest, message, validation }) {
       requestedBy: message.author,
       newName: name || message.channel.name,
       summary: actionRequest.data?.summary,
+      mentionRole: mentionInNotification,
     });
   } catch (error) {
     await rollbackFullControlEscalation({ message, role, state: mutationState });
@@ -455,6 +492,8 @@ async function executeEscalateTicket({ actionRequest, message, validation }) {
       message,
       roleName: roleName || role.name,
       text: actionRequest.text,
+      role,
+      mentionRoleInTicket: mentionInTicket,
     });
   } catch (error) {
     console.error("Failed to send full-control escalation reply:", error);
@@ -553,5 +592,6 @@ module.exports = {
   executeTicketAction,
   performOverlayHandoff,
   rollbackFullControlEscalation,
+  sendTicketEscalationReply,
   snapshotRoleAccessOverwrite,
 };

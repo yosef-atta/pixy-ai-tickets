@@ -20,6 +20,10 @@ const {
   getGuildAiConfig,
   getOrCreateGuildSetting,
 } = require("../config/ai");
+const {
+  getNextEscalationMentionTarget,
+  setEscalationMentionTarget,
+} = require("../settings/ticketBehaviorService");
 const { prisma } = require("../config/prisma");
 const {
   SETUP_STEPS,
@@ -95,6 +99,7 @@ const PREFIX = Object.freeze({
   HUMAN_SKIP: "setup4_hskip:",
   HUMAN_FINISH: "setup4_hfinish:",
   HUMAN_REMOVE_ROUTE: "setup4_hremove:",
+  HUMAN_MENTION_CYCLE: "setup4_hmention:",
 });
 
 const scoped = (prefix, mode, userId, extra = null) =>
@@ -707,10 +712,18 @@ function humanRoleRow(userId, mode) {
 async function renderHumanSupport(guild, userId, mode, notice = null) {
   const human = await loadHumanSupport(guild);
   const configured = Boolean(human.category && human.notification && human.routes.length);
+  const mentionTarget = human.setting?.escalationMentionTarget || "outside";
+  const mentionTargetLabel = mentionTarget === "inside"
+    ? "Inside Ticket"
+    : mentionTarget === "both"
+      ? "Both Channels"
+      : "Notification Channel";
+
   const lines = [
     `Escalation category: ${human.category ? `**${human.category.name}**` : "Not configured"}`,
     `Notification channel: ${human.notification ? `<#${human.notification.id}>` : "Not configured"}`,
     `Support routes: **${human.routes.length}**`,
+    `Support mention: **${mentionTargetLabel}**`,
     human.routeDetails.length ? "" : null,
     human.routeDetails.length ? formatRoutes(human.routeDetails) : null,
   ].filter(Boolean);
@@ -749,6 +762,10 @@ async function renderHumanSupport(guild, userId, mode, notice = null) {
       new ButtonBuilder()
         .setCustomId(scoped(PREFIX.HUMAN_CATEGORY_CREATE, mode, userId))
         .setLabel("Use Auto Category")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(scoped(PREFIX.HUMAN_MENTION_CYCLE, mode, userId))
+        .setLabel(`Mention: ${mentionTargetLabel}`)
         .setStyle(ButtonStyle.Secondary)
     ));
   }
@@ -1129,6 +1146,24 @@ const command = {
         const notice = configured.notification.ok
           ? "Human Support notification channel is ready."
           : `Could not prepare the notification channel: ${configured.notification.code}.`;
+        await editPanel(interaction, await renderHumanSupport(interaction.guild, userId, mode, notice));
+      },
+    },
+    {
+      customIdPrefix: PREFIX.HUMAN_MENTION_CYCLE,
+      async execute(interaction) {
+        const { mode, userId } = parseScoped(interaction.customId, PREFIX.HUMAN_MENTION_CYCLE);
+        if (!(await assertOwner(interaction, userId))) return;
+        await deferUpdate(interaction);
+        const currentSetting = await getOrCreateGuildSetting(interaction.guild.id);
+        const nextTarget = getNextEscalationMentionTarget(currentSetting?.escalationMentionTarget);
+        await setEscalationMentionTarget(interaction.guild.id, nextTarget);
+        const nextLabel = nextTarget === "inside"
+          ? "Inside Ticket"
+          : nextTarget === "both"
+            ? "Both Channels"
+            : "Notification Channel";
+        const notice = `Support role mention location set to **${nextLabel}**.`;
         await editPanel(interaction, await renderHumanSupport(interaction.guild, userId, mode, notice));
       },
     },
