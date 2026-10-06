@@ -270,9 +270,9 @@ function formatPreflightIssues(preflight) {
 function behaviorPlanNote(billing) {
   if (billing.plan === "expired") {
     return [
-      `Effective plan: **${billing.planLabel}**.`,
+      `⚠️ **Effective plan: 🔴 ${billing.planLabel}**`,
       "Stored preferences are preserved, but premium agent actions remain entitlement-gated at execution time.",
-      "Use `/pixy-billing` for activation details.",
+      "👉 Use `/pixy-billing` for activation details.",
     ].join("\n");
   }
   return `Effective plan: **${billing.planLabel}**. Runtime entitlement checks still apply to premium actions.`;
@@ -288,18 +288,27 @@ async function renderHome(guild, userId, notice = null) {
     prisma.guildIgnoredChannel.count({ where: { guildId } }),
   ]);
   const mode = resolveTicketOperatingMode(setting);
+  const isExpired = billing.plan === "expired";
+
+  const description = [
+    "Manage Pixy's secondary behavior and server content here.",
+    "Ticket Sources, AI Provider credentials/models, and Human Support routes live in `/pixy-setup`.",
+  ];
+  if (isExpired) {
+    description.push(
+      "",
+      "⚠️ **Pixy Pro Trial Expired**: Learned knowledge and advanced actions are locked. Use `/pixy-billing` to activate Pixy Pro."
+    );
+  }
 
   const embed = new EmbedBuilder()
     .setTitle("Pixy Settings")
-    .setColor(0x5865f2)
-    .setDescription([
-      "Manage Pixy's secondary behavior and server content here.",
-      "Ticket Sources, AI Provider credentials/models, and Human Support routes live in `/pixy-setup`.",
-    ].join("\n"))
+    .setColor(isExpired ? 0xed4245 : 0x5865f2)
+    .setDescription(description.join("\n"))
     .addFields(
-      { name: "Plan", value: billing.planLabel, inline: true },
+      { name: "Plan", value: isExpired ? `🔴 **${billing.planLabel}**` : `🟢 **${billing.planLabel}**`, inline: true },
       { name: "Ticket Behavior", value: modeLabel(mode), inline: true },
-      { name: "Knowledge", value: `${knowledge.total}/${knowledge.limit}`, inline: true },
+      { name: "Knowledge", value: `${knowledge.total}/${knowledge.limit}${isExpired ? " 🔒" : ""}`, inline: true },
       {
         name: "Safety",
         value: `${safety.guildBlockedCount} custom blocked • ${safety.guildAllowedCount} allow exceptions`,
@@ -476,19 +485,30 @@ async function renderKnowledge(guild, userId, page = 0, notice = null) {
   ]);
 
   const atLimit = overview.limit <= 0 || overview.total >= overview.limit;
+  const isLocked = !writeState.available;
+
+  const description = isLocked
+    ? [
+        "🔒 **Feature Locked: Subscription / Trial Expired**",
+        "",
+        `⚠️ **New additions are currently locked:** ${writeState.message}`,
+        "",
+        "📌 All adding and importing actions below are disabled until Pixy Pro is activated.",
+        "👉 Use `/pixy-billing` to view renewal and activation options.",
+      ].join("\n")
+    : [
+        "Knowledge is context Pixy can understand and reuse — it is **not** an exact FAQ matcher.",
+        "A Q&A entry gives Pixy an example question plus the fact behind it; future users can ask the same thing in completely different words.",
+        "For plans, packages, policies, pricing, or longer server information, one **Free-form** note is often enough for Pixy to answer many related questions.",
+        "Use **Quick Import** to paste several Q&A facts at once, or add one Q&A / Free-form note manually.",
+      ].join("\n");
+
   const embed = new EmbedBuilder()
-    .setTitle("Knowledge")
-    .setColor(0x57f287)
-    .setDescription([
-      "Knowledge is context Pixy can understand and reuse — it is **not** an exact FAQ matcher.",
-      "A Q&A entry gives Pixy an example question plus the fact behind it; future users can ask the same thing in completely different words.",
-      "For plans, packages, policies, pricing, or longer server information, one **Free-form** note is often enough for Pixy to answer many related questions.",
-      writeState.available
-        ? "Use **Quick Import** to paste several Q&A facts at once, or add one Q&A / Free-form note manually."
-        : `New additions are currently locked: ${writeState.message}`,
-    ].join("\n"))
+    .setTitle(isLocked ? "Knowledge — Locked 🔒" : "Knowledge")
+    .setColor(isLocked ? 0xed4245 : 0x57f287)
+    .setDescription(description)
     .addFields(
-      { name: "Plan", value: billing.planLabel, inline: true },
+      { name: "Plan", value: isLocked ? `🔴 **${billing.planLabel}**` : `🟢 **${billing.planLabel}**`, inline: true },
       { name: "Total", value: `${overview.total}/${overview.limit}`, inline: true },
       { name: "Q&A", value: String(overview.qna), inline: true },
       { name: "Free-form", value: String(overview.freeform), inline: true }
@@ -498,10 +518,12 @@ async function renderKnowledge(guild, userId, page = 0, notice = null) {
     });
 
   if (!list.items.length) {
-    embed.addFields({
-      name: "Example",
-      value: "Instead of adding separate FAQs for every wording, add a Free-form note such as **Gold Advertising Package** with its price, duration, benefits, and rules. Pixy can use those facts to answer different questions about the package.",
-    });
+    if (!isLocked) {
+      embed.addFields({
+        name: "Example",
+        value: "Instead of adding separate FAQs for every wording, add a Free-form note such as **Gold Advertising Package** with its price, duration, benefits, and rules. Pixy can use those facts to answer different questions about the package.",
+      });
+    }
   } else {
     list.items.forEach((item, index) => {
       const number = list.page * list.pageSize + index + 1;
@@ -515,19 +537,19 @@ async function renderKnowledge(guild, userId, page = 0, notice = null) {
   const addRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(scoped(PREFIX.KNOWLEDGE_QUICK_IMPORT, userId, list.page))
-      .setLabel("Quick Import")
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(!writeState.available || atLimit),
+      .setLabel(isLocked ? "Quick Import (Locked)" : "Quick Import")
+      .setStyle(isLocked ? ButtonStyle.Secondary : ButtonStyle.Primary)
+      .setDisabled(isLocked || atLimit),
     new ButtonBuilder()
       .setCustomId(scoped(PREFIX.KNOWLEDGE_ADD_QNA, userId, list.page))
-      .setLabel("Add Q&A Fact")
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(!writeState.available || atLimit),
+      .setLabel(isLocked ? "Add Q&A (Locked)" : "Add Q&A Fact")
+      .setStyle(isLocked ? ButtonStyle.Secondary : ButtonStyle.Primary)
+      .setDisabled(isLocked || atLimit),
     new ButtonBuilder()
       .setCustomId(scoped(PREFIX.KNOWLEDGE_ADD_FREEFORM, userId, list.page))
-      .setLabel("Add Free-form")
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(!writeState.available || atLimit),
+      .setLabel(isLocked ? "Add Free-form (Locked)" : "Add Free-form")
+      .setStyle(isLocked ? ButtonStyle.Secondary : ButtonStyle.Primary)
+      .setDisabled(isLocked || atLimit),
     new ButtonBuilder()
       .setCustomId(scoped(PREFIX.KNOWLEDGE_CLEAR, userId, list.page))
       .setLabel("Clear Knowledge")
