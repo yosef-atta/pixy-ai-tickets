@@ -11,7 +11,6 @@ const { getAiProvider } = require("../../ai/providers/providerRegistry");
 const { parseAiOutput } = require("../../ai/parseAiAction");
 const {
   getGuildAgentActionAvailability,
-  getSubscriptionRejectionMessage,
   getSubscriptionRejectionStatus,
   loadGuildEntitlementState,
 } = require("../../billing/entitlementService");
@@ -43,7 +42,7 @@ const MESSAGES = {
     invalidActionJson: "حصلت مشكلة بسيطة وأنا بحاول أفهم الطلب. جرّب تكتب طلبك مرة تانية بشكل أوضح.",
     actionFailed: "مش قادر أنفّذ الطلب ده دلوقتي. جرّب تاني أو استنى حد من الدعم يساعدك.",
     assistantActionBlocked:
-      "أقدر أساعدك بالمعلومات هنا، لكن إجراءات إغلاق أو إعادة تسمية أو تصعيد التذكرة تحتاج Pixy Pro. اكتب تفاصيل طلبك وسأحاول مساعدتك بنص عادي.",
+      "أقدر أساعدك بالإجابة على استفساراتك هنا، أما إدارة التذكرة أو تصعيدها فتتم يدويًا بواسطة فريق الدعم. اكتب تفاصيل طلبك وسأحاول مساعدتك.",
   },
   en: {
     tooLong: "Your message is too long for Pixy AI to process. Please keep it under {max} characters.",
@@ -53,7 +52,7 @@ const MESSAGES = {
     invalidActionJson: "Something went wrong while I was trying to understand the request. Please try again more clearly.",
     actionFailed: "I can't complete that request right now. Please try again or wait for a support member to help.",
     assistantActionBlocked:
-      "I can still help with information here, but closing, renaming, and escalating tickets require Pixy Pro. Please describe what you need and I'll respond with normal text.",
+      "I can assist with questions here, but ticket management and escalation are handled directly by staff. Please describe what you need and I'll do my best to help.",
   },
 };
 
@@ -427,8 +426,7 @@ const messageCreateEvent = {
             error: agentAvailability.code,
           });
           await deliverNotification(
-            getSubscriptionRejectionMessage(agentAvailability.code) ||
-              t(lang, "actionFailed")
+            t(lang, "assistantActionBlocked")
           );
           return;
         }
@@ -482,8 +480,9 @@ const messageCreateEvent = {
           });
           console.error("AI ticket action execution failed:", error);
           await deliverNotification(
-            getSubscriptionRejectionMessage(error?.code) ||
-              t(lang, "actionFailed")
+            subscriptionStatus
+              ? t(lang, "assistantActionBlocked")
+              : t(lang, "actionFailed")
           );
         }
         return;

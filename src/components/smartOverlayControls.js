@@ -20,11 +20,10 @@ function buildSmartOverlayContent(aiEnabled = true, options = {}) {
 
   if (!premiumEntitled) {
     return [
-      "Hello 👋 I'm Pixy AI. Ask your question here and I'll try to assist.",
+      "Hello 👋 I'm Pixy AI. Ask your question here and I'll try to assist while the support team reviews your ticket.",
       "",
-      "**Pixy AI Control (Basic Mode)**",
-      "⚠️ **Subscription / Trial Expired:** Server knowledge and Pixy Pro ticket actions are unavailable on the current plan.",
-      "Staff can pause or resume automatic replies from the menu below.",
+      "**Ticket Assistant**",
+      "Automated ticket actions are unavailable. Staff will assist you directly and can pause or resume AI replies below.",
       options.escalated === true
         ? "🤝 **Human support requested** — this ticket has already been handed off for review."
         : null,
