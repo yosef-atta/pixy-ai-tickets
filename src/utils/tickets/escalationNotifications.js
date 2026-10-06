@@ -29,6 +29,22 @@ function getNotificationChannelName() {
     .replace(/^[-_]+|[-_]+$/g, "") || "pixy-notifications";
 }
 
+function isEscalationNotificationChannel(channel, config = null) {
+  if (!channel) return false;
+  if (config?.escalationNotificationChannelId && channel.id === config.escalationNotificationChannelId) {
+    return true;
+  }
+  const channelName = String(channel.name || "")
+    .toLowerCase()
+    .trim()
+    .replace(/^#/, "");
+  const notifyName = getNotificationChannelName().toLowerCase().trim().replace(/^#/, "");
+  if (channelName === "pixy-notifications" || channelName === notifyName) {
+    return true;
+  }
+  return false;
+}
+
 function cleanText(value, maxLength = 1000) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
@@ -395,8 +411,10 @@ module.exports = {
   canMentionRoleInChannel,
   canSendInChannel,
   getFreshBotMember,
+  getNotificationChannelName,
   getNotificationChannelPermissionStatus,
   getOrCreateEscalationNotificationChannel,
+  isEscalationNotificationChannel,
   refreshNotificationChannel,
   sendEscalationNotification,
 };

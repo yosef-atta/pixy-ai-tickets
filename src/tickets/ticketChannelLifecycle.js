@@ -14,6 +14,9 @@ const {
   getTicketSurfaceSettings,
   isSupportedTicketChannel,
 } = require("../utils/tickets/ticketSurface");
+const {
+  isEscalationNotificationChannel,
+} = require("../utils/tickets/escalationNotifications");
 
 function collectionValues(value) {
   if (!value) return [];
@@ -72,6 +75,10 @@ async function resolveTicketChannelEligibility(channel, options = {}) {
   const config = options.config || await client.guildConfig.findUnique({
     where: { guildId },
   });
+
+  if (isEscalationNotificationChannel(channel, config)) {
+    return { eligible: false, code: "notification_channel", config };
+  }
 
   if (!config?.enabled) {
     return { eligible: false, code: "guild_not_configured", config };
@@ -289,6 +296,11 @@ async function reconcileTicketChannel(channel, options = {}) {
     const removed = guildId && channelId
       ? await untrackTicketChannel(guildId, channelId, { client })
       : { count: 0 };
+    if (eligibility.code === "notification_channel") {
+      findTicketControlMessage(channel)
+        .then((msg) => msg?.delete?.().catch(() => null))
+        .catch(() => null);
+    }
     return {
       tracked: false,
       code: eligibility.code,
@@ -363,6 +375,7 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
   const eligibleChannels = new Map();
   if (config?.enabled && sources.length) {
     for (const channel of visibleSurfaces.values()) {
+      if (isEscalationNotificationChannel(channel, config)) continue;
       let source = findMatchingSourceForChannel(channel, sources);
       if (!source && config?.escalationCategoryId) {
         const parentId = channel.parentId || channel.parent?.id;
@@ -388,8 +401,13 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
 
       const channel = visibleSurfaces.get(ticket.channelId) ||
         await resolveGuildTicketSurface(guild, ticket.channelId);
-      if (!channel || !isSupportedTicketChannel(channel)) {
+      if (!channel || !isSupportedTicketChannel(channel) || isEscalationNotificationChannel(channel, config)) {
         removeIds.push(ticket.channelId);
+        if (channel && isEscalationNotificationChannel(channel, config)) {
+          findTicketControlMessage(channel)
+            .then((msg) => msg?.delete?.().catch(() => null))
+            .catch(() => null);
+        }
         continue;
       }
 

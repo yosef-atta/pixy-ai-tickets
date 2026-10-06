@@ -349,3 +349,114 @@ test("an escalated ticket moved to escalation category remains eligible and trac
   assert.equal(result.tracked, true);
   assert.equal(result.code, "already_tracked");
 });
+
+test("escalation notification channel is not eligible and is untracked even if inside escalation category", async () => {
+  const guild = makeGuild();
+  const ESCALATION_CAT = "category-escalation";
+  const channel = makeChannel("pixy-notifications-id", ESCALATION_CAT);
+  channel.name = "pixy-notifications";
+  channel.guild = guild;
+
+  let deletedCount = 0;
+  const client = {
+    guildConfig: {
+      async findUnique() {
+        return {
+          guildId: GUILD_ID,
+          enabled: true,
+          escalationCategoryId: ESCALATION_CAT,
+          escalationNotificationChannelId: "pixy-notifications-id",
+        };
+      },
+    },
+    ticketSource: {
+      async findMany() {
+        return [source(CATEGORY_A)];
+      },
+    },
+    guildIgnoredChannel: {
+      async findUnique() {
+        return null;
+      },
+    },
+    ticketChannel: {
+      async findUnique() {
+        return { channelId: channel.id, guildId: GUILD_ID, closed: false, status: "open" };
+      },
+      async deleteMany({ where }) {
+        if (where.channelId === channel.id) deletedCount += 1;
+        return { count: 1 };
+      },
+    },
+  };
+
+  const eligible = await resolveTicketChannelEligibility(channel, { client });
+  assert.equal(eligible.eligible, false);
+  assert.equal(eligible.code, "notification_channel");
+
+  const result = await reconcileTicketChannel(channel, { client });
+  assert.equal(result.tracked, false);
+  assert.equal(result.code, "notification_channel");
+  assert.equal(deletedCount, 1);
+});
+
+test("reconcileGuildTicketChannels ignores notification channel and removes any stale ticket record for it", async () => {
+  const ESCALATION_CAT = "category-escalation";
+  const notifyChannel = makeChannel("notify-123", ESCALATION_CAT);
+  notifyChannel.name = "pixy-notifications";
+  const validTicket = makeChannel("ticket-101", CATEGORY_A);
+  validTicket.name = "ticket-101";
+
+  const guild = makeGuild([notifyChannel, validTicket]);
+
+  const deletedIds = [];
+  const client = {
+    guildConfig: {
+      async findUnique() {
+        return {
+          guildId: GUILD_ID,
+          enabled: true,
+          ticketCategoryId: CATEGORY_A,
+          escalationCategoryId: ESCALATION_CAT,
+          escalationNotificationChannelId: "notify-123",
+        };
+      },
+    },
+    ticketSource: {
+      async findMany() {
+        return [source(CATEGORY_A)];
+      },
+    },
+    guildIgnoredChannel: {
+      async findMany() {
+        return [];
+      },
+    },
+    ticketChannel: {
+      async findMany() {
+        return [
+          { channelId: "notify-123", guildId: GUILD_ID, closed: false, status: "open" },
+          { channelId: "ticket-101", guildId: GUILD_ID, closed: false, status: "open" },
+        ];
+      },
+      async deleteMany({ where }) {
+        if (where.channelId?.in) {
+          deletedIds.push(...where.channelId.in);
+          return { count: where.channelId.in.length };
+        }
+        return { count: 0 };
+      },
+      async findUnique({ where }) {
+        if (where.channelId === "ticket-101") {
+          return { channelId: "ticket-101", guildId: GUILD_ID, closed: false, status: "open" };
+        }
+        return null;
+      },
+    },
+  };
+
+  const result = await reconcileGuildTicketChannels(guild, { client, ensureControls: false });
+  assert.equal(result.eligible, 1); // Only ticket-101 is eligible
+  assert.equal(result.removed, 1);
+  assert.deepEqual(deletedIds, ["notify-123"]);
+});
