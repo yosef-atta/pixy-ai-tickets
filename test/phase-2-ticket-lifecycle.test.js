@@ -315,3 +315,37 @@ test("legacy single-category setup replacement keeps the new source table consis
   });
   assert.equal(upserts[0].create.sourceId, CATEGORY_B);
 });
+
+test("an escalated ticket moved to escalation category remains eligible and tracked", async () => {
+  const guild = makeGuild();
+  const ESCALATION_CAT = "category-escalation";
+  const channel = makeChannel("channel-escalated", ESCALATION_CAT);
+  channel.guild = guild;
+
+  const client = {
+    guildConfig: {
+      async findUnique() {
+        return { guildId: GUILD_ID, enabled: true, escalationCategoryId: ESCALATION_CAT };
+      },
+    },
+    ticketSource: {
+      async findMany() {
+        return [source(CATEGORY_A), source(CATEGORY_B)];
+      },
+    },
+    guildIgnoredChannel: {
+      async findUnique() {
+        return null;
+      },
+    },
+    ticketChannel: {
+      async findUnique() {
+        return { channelId: channel.id, guildId: GUILD_ID, closed: false, status: "open", escalated: true };
+      },
+    },
+  };
+
+  const result = await reconcileTicketChannel(channel, { client });
+  assert.equal(result.tracked, true);
+  assert.equal(result.code, "already_tracked");
+});

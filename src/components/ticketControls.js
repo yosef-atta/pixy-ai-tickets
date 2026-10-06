@@ -28,6 +28,7 @@ const {
 const {
   TICKET_ACTIONS,
 } = require("../utils/tickets/actions/ticketActionTypes");
+const { isSupportedTicketChannel } = require("../utils/tickets/ticketSurface");
 const { createStringSelectMenus } = require("../utils/selectMenuHelper");
 
 const EPHEMERAL = 64;
@@ -251,13 +252,21 @@ async function assertScopedInteraction(interaction, userId, channelId) {
 async function getOpenTicket(interaction) {
   if (!interaction.guild || !interaction.channel) return null;
 
-  if (interaction.channel.type !== ChannelType.GuildText) return null;
+  if (!isSupportedTicketChannel(interaction.channel)) return null;
 
-  const ticket = await prisma.ticketChannel.findUnique({
+  let ticket = await prisma.ticketChannel.findUnique({
     where: {
       channelId: interaction.channel.id,
     },
   });
+
+  if (!ticket || ticket.closed) {
+    const { reconcileTicketChannel } = require("../tickets/ticketChannelLifecycle");
+    const result = await reconcileTicketChannel(interaction.channel).catch(() => null);
+    if (result?.tracked && result?.ticket && !result.ticket.closed) {
+      ticket = result.ticket;
+    }
+  }
 
   if (!ticket || ticket.closed) return null;
 

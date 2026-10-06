@@ -82,7 +82,26 @@ async function resolveTicketChannelEligibility(channel, options = {}) {
     return { eligible: false, code: "ticket_sources_not_configured", config, sources };
   }
 
-  const source = findMatchingSourceForChannel(channel, sources);
+  let source = findMatchingSourceForChannel(channel, sources);
+  if (!source && config?.escalationCategoryId) {
+    const parentId = channel.parentId || channel.parent?.id;
+    if (parentId && parentId === config.escalationCategoryId) {
+      source = {
+        kind: "escalation_category",
+        id: config.escalationCategoryId,
+        name: "Escalated Category",
+      };
+    }
+  }
+
+  if (!source && options.existingTicket && !options.existingTicket.closed && options.existingTicket.escalated) {
+    source = {
+      kind: "escalated_ticket",
+      id: channel.id,
+      name: "Escalated Ticket",
+    };
+  }
+
   if (!source) {
     return { eligible: false, code: "outside_ticket_sources", config, sources };
   }
@@ -344,7 +363,17 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
   const eligibleChannels = new Map();
   if (config?.enabled && sources.length) {
     for (const channel of visibleSurfaces.values()) {
-      const source = findMatchingSourceForChannel(channel, sources);
+      let source = findMatchingSourceForChannel(channel, sources);
+      if (!source && config?.escalationCategoryId) {
+        const parentId = channel.parentId || channel.parent?.id;
+        if (parentId && parentId === config.escalationCategoryId) {
+          source = {
+            kind: "escalation_category",
+            id: config.escalationCategoryId,
+            name: "Escalated Category",
+          };
+        }
+      }
       if (!source || ignoredChannelIds.has(channel.id)) continue;
       eligibleChannels.set(channel.id, { channel, source, discovered: true });
     }
@@ -364,7 +393,24 @@ async function reconcileGuildTicketChannels(guild, options = {}) {
         continue;
       }
 
-      const source = findMatchingSourceForChannel(channel, sources);
+      let source = findMatchingSourceForChannel(channel, sources);
+      if (!source && config?.escalationCategoryId) {
+        const parentId = channel.parentId || channel.parent?.id;
+        if (parentId && parentId === config.escalationCategoryId) {
+          source = {
+            kind: "escalation_category",
+            id: config.escalationCategoryId,
+            name: "Escalated Category",
+          };
+        }
+      }
+      if (!source && !ticket.closed && ticket.escalated) {
+        source = {
+          kind: "escalated_ticket",
+          id: channel.id,
+          name: "Escalated Ticket",
+        };
+      }
       if (!source || ignoredChannelIds.has(channel.id)) {
         removeIds.push(ticket.channelId);
         continue;
